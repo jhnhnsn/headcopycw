@@ -7,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'morse_data.dart';
 import 'morse_engine.dart';
-import 'tone_demo_page.dart';
 
 enum PracticeMode { characters, words, groups, qso }
 
@@ -17,7 +16,7 @@ class CwTrainerSettings {
   int actualWpm = 20;
   int effectiveWpm = 15;
   EffectiveSpeedMode effectiveMode = EffectiveSpeedMode.farnsworth;
-  int kochLearnedCount = 10;
+  int kochLearnedCount = 2;
   int frequencyHz = 600;
   int groupSize = 5;
   bool wordsOnlyLearnedLetters = true;
@@ -32,7 +31,7 @@ class CwTrainerSettings {
       ..actualWpm = prefs.getInt('actualWpm') ?? 20
       ..effectiveWpm = prefs.getInt('effectiveWpm') ?? 15
       ..effectiveMode = prefs.getString('effectiveMode') == 'wordsworth' ? EffectiveSpeedMode.wordsworth : EffectiveSpeedMode.farnsworth
-      ..kochLearnedCount = prefs.getInt('kochLearnedCount') ?? 10
+      ..kochLearnedCount = prefs.getInt('kochLearnedCount') ?? 2
       ..frequencyHz = _kValidTones.contains(hz) ? hz : 600
       ..groupSize = prefs.getInt('groupSize') ?? 5
       ..wordsOnlyLearnedLetters = prefs.getBool('wordsOnlyLearnedLetters') ?? true
@@ -245,13 +244,6 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
         title: const Text('CW Trainer (Koch)'),
         actions: [
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSetup),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: (v) {
-              if (v == 'tone') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ToneDemoPage()));
-            },
-            itemBuilder: (ctx) => [const PopupMenuItem(value: 'tone', child: Text('Tone & Hello World'))],
-          ),
         ],
       ),
       body: Padding(
@@ -272,10 +264,11 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
             const SizedBox(height: 8),
             // Mode
             SegmentedButton<PracticeMode>(
+              showSelectedIcon: false,
               segments: [
-                ButtonSegment(value: PracticeMode.characters, label: Text('Chars', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.text_fields)),
-                ButtonSegment(value: PracticeMode.groups, label: Text('Groups', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.grid_on)),
-                ButtonSegment(value: PracticeMode.words, label: Text('Words', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.article)),
+                ButtonSegment(value: PracticeMode.characters, label: Text('Letters', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.sort_by_alpha)),
+                ButtonSegment(value: PracticeMode.groups, label: Text('Groups', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.abc)),
+                ButtonSegment(value: PracticeMode.words, label: Text('Words', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.menu_book)),
                 ButtonSegment(value: PracticeMode.qso, label: Text('QSO', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.record_voice_over)),
               ],
               selected: {_mode},
