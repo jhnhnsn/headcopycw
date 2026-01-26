@@ -23,6 +23,8 @@ class CwTrainerSettings {
   bool wordsOnlyLearnedLetters = true;
   /// Delay (ms) before showing received characters; playing the next is not delayed.
   int displayDelayMs = 400;
+  /// Session length in minutes (0 = unlimited).
+  int sessionLengthMinutes = 5;
 
   static Future<CwTrainerSettings> load(SharedPreferences prefs) async {
     final hz = prefs.getInt('frequencyHz') ?? 600;
@@ -34,7 +36,8 @@ class CwTrainerSettings {
       ..frequencyHz = _kValidTones.contains(hz) ? hz : 600
       ..groupSize = prefs.getInt('groupSize') ?? 5
       ..wordsOnlyLearnedLetters = prefs.getBool('wordsOnlyLearnedLetters') ?? true
-      ..displayDelayMs = prefs.getInt('displayDelayMs') ?? 400;
+      ..displayDelayMs = prefs.getInt('displayDelayMs') ?? 400
+      ..sessionLengthMinutes = prefs.getInt('sessionLengthMinutes') ?? 5;
   }
 
   static Future<void> save(SharedPreferences prefs, CwTrainerSettings s) async {
@@ -46,6 +49,7 @@ class CwTrainerSettings {
     await prefs.setInt('groupSize', s.groupSize);
     await prefs.setBool('wordsOnlyLearnedLetters', s.wordsOnlyLearnedLetters);
     await prefs.setInt('displayDelayMs', s.displayDelayMs);
+    await prefs.setInt('sessionLengthMinutes', s.sessionLengthMinutes);
   }
 }
 
@@ -66,6 +70,9 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   String _displayText = '';
   StreamSubscription? _completeSub;
   int _qsoNext = 0;
+  Timer? _sessionTimer;
+  Timer? _countdownTimer;
+  int _remainingSeconds = 0;
 
   @override
   void initState() {
@@ -82,12 +89,21 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   @override
   void dispose() {
     _completeSub?.cancel();
+    _sessionTimer?.cancel();
+    _countdownTimer?.cancel();
     _scrollController.dispose();
     _player.dispose();
     super.dispose();
   }
 
   Set<String> get _learned => kochLearnedSet(_settings.kochLearnedCount).toSet();
+
+  String get _buttonLabel {
+    if (_settings.sessionLengthMinutes == 0) return 'Stop';
+    final mins = _remainingSeconds ~/ 60;
+    final secs = _remainingSeconds % 60;
+    return 'Stop ${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
 
   List<String> get _filteredWords {
     final allowed = _learned;
@@ -104,11 +120,10 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   }
 
   String _nextGroup() {
-    final set = _learned;
-    if (set.isEmpty) return '';
-    final n = _settings.groupSize.clamp(1, set.length);
-    final list = set.toList()..shuffle(_rnd);
-    return list.take(n).join();
+    final list = _learned.toList();
+    if (list.isEmpty) return '';
+    final n = _settings.groupSize.clamp(1, 10);
+    return List.generate(n, (_) => list[_rnd.nextInt(list.length)]).join();
   }
 
   String _nextWord() {
@@ -154,7 +169,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     _completeSub?.cancel();
     _completeSub = _player.onPlayerComplete.listen((_) {
       if (!_running) return;
-      final sep = (_mode == PracticeMode.characters || _mode == PracticeMode.words) ? ' ' : '\n';
+      final sep = _mode == PracticeMode.qso ? '\n' : ' ';
       // Delay only the display of what was just played.
       Future.delayed(Duration(milliseconds: _settings.displayDelayMs), () {
         if (!mounted) return;
@@ -184,12 +199,31 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
       setState(() => _running = false);
       await _player.stop();
       _completeSub?.cancel();
+      _sessionTimer?.cancel();
+      _countdownTimer?.cancel();
       return;
     }
     setState(() {
       _running = true;
       _displayText = '';
+      _remainingSeconds = _settings.sessionLengthMinutes * 60;
     });
+    // Start session timer if session length is set
+    _sessionTimer?.cancel();
+    _countdownTimer?.cancel();
+    if (_settings.sessionLengthMinutes > 0) {
+      _sessionTimer = Timer(Duration(minutes: _settings.sessionLengthMinutes), () {
+        if (_running && mounted) {
+          _toggleRun();
+        }
+      });
+      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || !_running) return;
+        setState(() {
+          if (_remainingSeconds > 0) _remainingSeconds--;
+        });
+      });
+    }
     _playNext();
   }
 
@@ -275,7 +309,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
             FilledButton.icon(
               onPressed: _toggleRun,
               icon: Icon(_running ? Icons.stop : Icons.play_arrow),
-              label: Text(_running ? 'Stop' : 'Start'),
+              label: Text(_running ? _buttonLabel : 'Start'),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
               ),
@@ -305,6 +339,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _groupSize;
   late bool _wordsOnlyLearned;
   late int _displayDelayMs;
+  late int _sessionLengthMinutes;
+  late TextEditingController _sessionLengthController;
 
   @override
   void initState() {
@@ -317,6 +353,14 @@ class _SettingsPageState extends State<SettingsPage> {
     _groupSize = widget.settings.groupSize;
     _wordsOnlyLearned = widget.settings.wordsOnlyLearnedLetters;
     _displayDelayMs = widget.settings.displayDelayMs;
+    _sessionLengthMinutes = widget.settings.sessionLengthMinutes;
+    _sessionLengthController = TextEditingController(text: '$_sessionLengthMinutes');
+  }
+
+  @override
+  void dispose() {
+    _sessionLengthController.dispose();
+    super.dispose();
   }
 
   void _save() {
@@ -328,7 +372,8 @@ class _SettingsPageState extends State<SettingsPage> {
       ..frequencyHz = _kValidTones[_pitchSlider.round().clamp(0, _kValidTones.length - 1)]
       ..groupSize = _groupSize
       ..wordsOnlyLearnedLetters = _wordsOnlyLearned
-      ..displayDelayMs = _displayDelayMs);
+      ..displayDelayMs = _displayDelayMs
+      ..sessionLengthMinutes = _sessionLengthMinutes);
   }
 
   @override
@@ -379,6 +424,23 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 8),
             Text('Display delay (ms) – when to show received text', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _displayDelayMs.toDouble(), min: 0, max: 5000, divisions: 50, label: '$_displayDelayMs', onChanged: (v) => setState(() => _displayDelayMs = v.round())),
+            const SizedBox(height: 8),
+            Text('Session length (minutes, 0 = unlimited)', style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _sessionLengthController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'e.g. 5',
+              ),
+              onChanged: (v) {
+                final parsed = int.tryParse(v);
+                if (parsed != null && parsed >= 0) {
+                  _sessionLengthMinutes = parsed;
+                }
+              },
+            ),
           ],
         ),
       ),

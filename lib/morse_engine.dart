@@ -77,8 +77,8 @@ List<(bool, double)> textToMorseSegments({
 Uint8List segmentsToWav(
   List<(bool, double)> segments, {
   required double frequencyHz,
-  int sampleRate = 44100,
-  double amplitude = 0.3,
+  int sampleRate = 22050,
+  double amplitude = 0.25,
 }) {
   int totalSamples = 0;
   for (final s in segments) {
