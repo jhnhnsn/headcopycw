@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'morse_data.dart';
@@ -111,6 +112,26 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     super.initState();
     _loadPreferences();
     _loadWordLists();
+    _checkFirstLaunch();
+  }
+
+  Future<void> _checkFirstLaunch() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasSeenInfo = prefs.getBool('hasSeenInfo') ?? false;
+    if (!hasSeenInfo && mounted) {
+      await prefs.setBool('hasSeenInfo', true);
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const InfoPage()),
+        );
+      }
+    }
+  }
+
+  void _openInfo() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const InfoPage()),
+    );
   }
 
   Future<void> _loadWordLists() async {
@@ -492,18 +513,30 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
                   textAlign: TextAlign.center,
                 ),
               ),
-            // Start / Stop
-            FilledButton.icon(
-              onPressed: (_mode == PracticeMode.words &&
-                          _settings.wordListType == WordListType.learnedLetters &&
-                          !_hasLearnedWords)
-                  ? null
-                  : _toggleRun,
-              icon: Icon(_running ? Icons.stop : Icons.play_arrow),
-              label: Text(_running ? _buttonLabel : 'Start'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
+            // Start / Stop with Info button
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: (_mode == PracticeMode.words &&
+                                _settings.wordListType == WordListType.learnedLetters &&
+                                !_hasLearnedWords)
+                        ? null
+                        : _toggleRun,
+                    icon: Icon(_running ? Icons.stop : Icons.play_arrow),
+                    label: Text(_running ? _buttonLabel : 'Start'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: _openInfo,
+                  icon: const Icon(Icons.help_outline),
+                  tooltip: 'Help',
+                ),
+              ],
             ),
           ],
         ),
@@ -667,6 +700,64 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         ),
       ),
+      ),
+    );
+  }
+}
+
+class InfoPage extends StatefulWidget {
+  const InfoPage({super.key});
+
+  @override
+  State<InfoPage> createState() => _InfoPageState();
+}
+
+class _InfoPageState extends State<InfoPage> {
+  String _helpContent = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHelp();
+  }
+
+  Future<void> _loadHelp() async {
+    final content = await rootBundle.loadString('assets/HELP.md');
+    if (mounted) {
+      setState(() => _helpContent = content);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Head Copy CW Trainer'),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: _helpContent.isEmpty
+                ? const Center(child: CircularProgressIndicator())
+                : Markdown(
+                    data: _helpContent,
+                    padding: const EdgeInsets.all(24),
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text('Get Started'),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

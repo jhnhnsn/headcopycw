@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   audioplayers: ^6.0.0
   shared_preferences: ^2.2.2
+  flutter_markdown: ^0.6.18
 
 dev_dependencies:
   flutter_test:
@@ -23,3 +24,4 @@ flutter:
     - assets/cw-words.txt
     - assets/common-english-words.txt
     - assets/qsos.txt
+    - assets/HELP.md

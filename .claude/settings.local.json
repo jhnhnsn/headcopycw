@@ -6,7 +6,8 @@
       "Bash(powershell -Command \"python D:\\\\github\\\\claudemobileapptest\\\\fix_path.py\")",
       "Bash(powershell -Command \"python D:\\\\github\\\\claudemobileapptest\\\\run_flutter.py\")",
       "Bash(flutter analyze:*)",
-      "WebFetch(domain:)"
+      "WebFetch(domain:)",
+      "Bash(flutter pub get:*)"
     ]
   }
 }
