@@ -408,7 +408,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Text('Group size (for Groups mode)', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _groupSize.toDouble(), min: 2, max: 10, divisions: 8, label: '$_groupSize', onChanged: (v) => setState(() => _groupSize = v.round())),
             CheckboxListTile(
-              title: const Text('Words: only learnt letters'),
+              title: const Text('Words: only learned letters'),
               value: _wordsOnlyLearned,
               onChanged: (v) => setState(() => _wordsOnlyLearned = v ?? true),
               contentPadding: EdgeInsets.zero,
