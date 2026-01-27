@@ -1,4 +1,4 @@
-name: hello_world_app
+name: head_copy_cw_trainer
 description: A CW (Morse code) trainer using the Koch method.
 publish_to: 'none'
 version: 1.0.0+1
