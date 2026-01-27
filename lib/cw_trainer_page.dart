@@ -3,38 +3,65 @@ import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'morse_data.dart';
 import 'morse_engine.dart';
 
-enum PracticeMode { characters, words, groups, qso }
+enum PracticeMode { characters, groups, words, qso }
 
-const _kValidTones = [400, 500, 600, 700, 800, 900];
+enum WordListType { cwWords, englishWords, learnedLetters }
+
+WordListType _parseWordListType(String? value) {
+  switch (value) {
+    case 'english':
+      return WordListType.englishWords;
+    case 'learned':
+      return WordListType.learnedLetters;
+    default:
+      return WordListType.cwWords;
+  }
+}
+
+String _wordListTypeToString(WordListType type) {
+  switch (type) {
+    case WordListType.englishWords:
+      return 'english';
+    case WordListType.learnedLetters:
+      return 'learned';
+    case WordListType.cwWords:
+      return 'cw';
+  }
+}
+
+final _kValidTones = [for (var i = 350; i <= 1500; i += 25) i];
 
 class CwTrainerSettings {
   int actualWpm = 20;
   int effectiveWpm = 15;
   EffectiveSpeedMode effectiveMode = EffectiveSpeedMode.farnsworth;
   int kochLearnedCount = 2;
-  int frequencyHz = 600;
+  int frequencyHz = 700;
   int groupSize = 5;
   bool wordsOnlyLearnedLetters = true;
+  WordListType wordListType = WordListType.cwWords;
   /// Delay (ms) before showing received characters; playing the next is not delayed.
   int displayDelayMs = 400;
   /// Session length in minutes (0 = unlimited).
   int sessionLengthMinutes = 5;
 
   static Future<CwTrainerSettings> load(SharedPreferences prefs) async {
-    final hz = prefs.getInt('frequencyHz') ?? 600;
+    final hz = prefs.getInt('frequencyHz') ?? 700;
     return CwTrainerSettings()
       ..actualWpm = prefs.getInt('actualWpm') ?? 20
       ..effectiveWpm = prefs.getInt('effectiveWpm') ?? 15
       ..effectiveMode = prefs.getString('effectiveMode') == 'wordsworth' ? EffectiveSpeedMode.wordsworth : EffectiveSpeedMode.farnsworth
       ..kochLearnedCount = prefs.getInt('kochLearnedCount') ?? 2
-      ..frequencyHz = _kValidTones.contains(hz) ? hz : 600
+      ..frequencyHz = _kValidTones.contains(hz) ? hz : 700
       ..groupSize = prefs.getInt('groupSize') ?? 5
       ..wordsOnlyLearnedLetters = prefs.getBool('wordsOnlyLearnedLetters') ?? true
+      ..wordListType = _parseWordListType(prefs.getString('wordListType'))
       ..displayDelayMs = prefs.getInt('displayDelayMs') ?? 400
       ..sessionLengthMinutes = prefs.getInt('sessionLengthMinutes') ?? 5;
   }
@@ -47,6 +74,7 @@ class CwTrainerSettings {
     await prefs.setInt('frequencyHz', s.frequencyHz);
     await prefs.setInt('groupSize', s.groupSize);
     await prefs.setBool('wordsOnlyLearnedLetters', s.wordsOnlyLearnedLetters);
+    await prefs.setString('wordListType', _wordListTypeToString(s.wordListType));
     await prefs.setInt('displayDelayMs', s.displayDelayMs);
     await prefs.setInt('sessionLengthMinutes', s.sessionLengthMinutes);
   }
@@ -68,15 +96,38 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   bool _running = false;
   String _displayText = '';
   StreamSubscription? _completeSub;
-  int _qsoNext = 0;
   Timer? _sessionTimer;
   Timer? _countdownTimer;
   int _remainingSeconds = 0;
+  List<String> _cwWords = [];
+  List<String> _englishWords = [];
+  List<List<String>> _qsos = [];
+  int _currentQsoIndex = -1;
+  int _currentQsoLine = 0;
 
   @override
   void initState() {
     super.initState();
     _loadPreferences();
+    _loadWordLists();
+  }
+
+  Future<void> _loadWordLists() async {
+    final cwText = await rootBundle.loadString('assets/cw-words.txt');
+    final englishText = await rootBundle.loadString('assets/common-english-words.txt');
+    final qsoText = await rootBundle.loadString('assets/qsos.txt');
+    if (mounted) {
+      setState(() {
+        _cwWords = cwText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
+        _englishWords = englishText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
+        _qsos = qsoText
+            .split('---QSO---')
+            .map((q) => q.trim())
+            .where((q) => q.isNotEmpty)
+            .map((q) => q.split('\n').map((l) => l.trim().toUpperCase()).where((l) => l.isNotEmpty).join(' '))
+            .toList();
+      });
+    }
   }
 
   Future<void> _loadPreferences() async {
@@ -106,10 +157,19 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
 
   List<String> get _filteredWords {
     final allowed = _learned;
-    if (_settings.wordsOnlyLearnedLetters) {
-      return kWords.where((w) => wordUsesOnly(w, allowed)).toList();
+    if (_settings.wordListType == WordListType.learnedLetters) {
+      // Use built-in words filtered by learned letters (2+ chars only)
+      return kWords.where((w) => w.length >= 2 && wordUsesOnly(w, allowed)).toList();
     }
-    return kWords.where((w) => w.toUpperCase().split('').every((c) => kMorseCode.containsKey(c))).toList();
+    final source = _settings.wordListType == WordListType.cwWords ? _cwWords : _englishWords;
+    if (_settings.wordsOnlyLearnedLetters) {
+      return source.where((w) => wordUsesOnly(w, allowed)).toList();
+    }
+    return source.where((w) => w.split('').every((c) => kMorseCode.containsKey(c))).toList();
+  }
+
+  bool get _hasLearnedWords {
+    return kWords.any((w) => w.length >= 2 && wordUsesOnly(w, _learned));
   }
 
   String _nextCharacters() {
@@ -121,21 +181,26 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   String _nextGroup() {
     final list = _learned.toList();
     if (list.isEmpty) return '';
-    final n = _settings.groupSize.clamp(1, 10);
+    final maxSize = _settings.groupSize.clamp(2, 10);
+    final n = 2 + _rnd.nextInt(maxSize - 1); // Random size from 2 to maxSize
     return List.generate(n, (_) => list[_rnd.nextInt(list.length)]).join();
   }
 
   String _nextWord() {
-    final list = _filteredWords;
-    if (list.isEmpty) return _nextCharacters();
+    var list = _filteredWords;
+    // If no words match the filter, use the full word list
+    if (list.isEmpty) {
+      final source = _settings.wordListType == WordListType.cwWords ? _cwWords : _englishWords;
+      list = source.where((w) => w.split('').every((c) => kMorseCode.containsKey(c))).toList();
+    }
+    if (list.isEmpty) return '';
     return list[_rnd.nextInt(list.length)];
   }
 
   String _nextQso() {
-    if (kQsoPhrases.isEmpty) return '';
-    final s = kQsoPhrases[_qsoNext % kQsoPhrases.length];
-    _qsoNext++;
-    return s;
+    final list = _qsos.isNotEmpty ? _qsos : kQsoPhrases;
+    if (list.isEmpty) return '';
+    return list[_rnd.nextInt(list.length)];
   }
 
   String _nextPayload() {
@@ -190,7 +255,10 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
 
   void _scheduleNext() {
     if (!_running) return;
-    Future.delayed(Duration.zero, _playNext);
+    final delay = _mode == PracticeMode.groups
+        ? const Duration(milliseconds: 700)
+        : Duration.zero;
+    Future.delayed(delay, _playNext);
   }
 
   Future<void> _toggleRun() async {
@@ -237,11 +305,57 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     }
   }
 
+  String get _modeName {
+    switch (_mode) {
+      case PracticeMode.characters:
+        return 'Letters';
+      case PracticeMode.groups:
+        return 'Groups';
+      case PracticeMode.words:
+        return 'Words';
+      case PracticeMode.qso:
+        return 'QSO';
+    }
+  }
+
+  Color get _modeColor {
+    switch (_mode) {
+      case PracticeMode.characters:
+        return Colors.blue;
+      case PracticeMode.groups:
+        return Colors.orange;
+      case PracticeMode.words:
+        return Colors.green;
+      case PracticeMode.qso:
+        return Colors.purple;
+    }
+  }
+
+  Future<void> _updateKochCount(int count) async {
+    setState(() => _settings.kochLearnedCount = count);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('kochLearnedCount', count);
+  }
+
+  Future<void> _updateGroupSize(int size) async {
+    setState(() => _settings.groupSize = size);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('groupSize', size);
+  }
+
+  Future<void> _updateWordListType(WordListType type) async {
+    setState(() => _settings.wordListType = type);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('wordListType', _wordListTypeToString(type));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CW Trainer (Koch)'),
+        backgroundColor: _modeColor,
+        foregroundColor: Colors.white,
+        title: Text(_modeName),
         actions: [
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSetup),
         ],
@@ -252,29 +366,51 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Effective speed indicator
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'Effective: ${_settings.effectiveWpm} WPM  ·  Actual: ${_settings.actualWpm} WPM  ·  ${_settings.effectiveMode == EffectiveSpeedMode.farnsworth ? "Farnsworth" : "Wordsworth"}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
+            Text(
+              '${_settings.effectiveWpm} / ${_settings.actualWpm} WPM · ${_settings.effectiveMode == EffectiveSpeedMode.farnsworth ? "Farnsworth" : "Wordsworth"}',
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
-            // Mode
-            SegmentedButton<PracticeMode>(
-              showSelectedIcon: false,
-              segments: [
-                ButtonSegment(value: PracticeMode.characters, label: Text('Letters', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.sort_by_alpha)),
-                ButtonSegment(value: PracticeMode.groups, label: Text('Groups', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.abc)),
-                ButtonSegment(value: PracticeMode.words, label: Text('Words', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.menu_book)),
-                ButtonSegment(value: PracticeMode.qso, label: Text('QSO', maxLines: 1, overflow: TextOverflow.ellipsis), icon: const Icon(Icons.record_voice_over)),
-              ],
-              selected: {_mode},
-              onSelectionChanged: (v) => setState(() => _mode = v.first),
-            ),
-            const SizedBox(height: 16),
+            // Characters slider (only in Letters mode)
+            if (_mode == PracticeMode.characters) ...[
+              const SizedBox(height: 8),
+              Text('Letters (${_settings.kochLearnedCount})', style: Theme.of(context).textTheme.labelLarge),
+              Slider(
+                value: _settings.kochLearnedCount.toDouble(),
+                min: 2,
+                max: 40,
+                divisions: 38,
+                label: '${_settings.kochLearnedCount}',
+                onChanged: (v) => _updateKochCount(v.round()),
+              ),
+            ],
+            // Group size slider (only in Groups mode)
+            if (_mode == PracticeMode.groups) ...[
+              const SizedBox(height: 8),
+              Text('Max Group Size (${_settings.groupSize})', style: Theme.of(context).textTheme.labelLarge),
+              Slider(
+                value: _settings.groupSize.toDouble(),
+                min: 2,
+                max: 10,
+                divisions: 8,
+                label: '${_settings.groupSize}',
+                onChanged: (v) => _updateGroupSize(v.round()),
+              ),
+            ],
+            // Word list selector (only in Words mode)
+            if (_mode == PracticeMode.words) ...[
+              const SizedBox(height: 8),
+              SegmentedButton<WordListType>(
+                segments: const [
+                  ButtonSegment(value: WordListType.cwWords, label: Text('CW')),
+                  ButtonSegment(value: WordListType.englishWords, label: Text('English')),
+                  ButtonSegment(value: WordListType.learnedLetters, label: Text('Learned')),
+                ],
+                selected: {_settings.wordListType},
+                onSelectionChanged: (s) => _updateWordListType(s.first),
+              ),
+            ],
+            const SizedBox(height: 12),
             // Display (echo after sent)
             Expanded(
               child: Container(
@@ -298,9 +434,27 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
               ),
             ),
             const SizedBox(height: 16),
+            // Error message
+            if (_mode == PracticeMode.words &&
+                _settings.wordListType == WordListType.learnedLetters &&
+                !_hasLearnedWords)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Not enough letters learned to make a word yet',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
             // Start / Stop
             FilledButton.icon(
-              onPressed: _toggleRun,
+              onPressed: (_mode == PracticeMode.words &&
+                          _settings.wordListType == WordListType.learnedLetters &&
+                          !_hasLearnedWords)
+                  ? null
+                  : _toggleRun,
               icon: Icon(_running ? Icons.stop : Icons.play_arrow),
               label: Text(_running ? _buttonLabel : 'Start'),
               style: FilledButton.styleFrom(
@@ -309,6 +463,16 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
             ),
           ],
         ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: PracticeMode.values.indexOf(_mode),
+        onDestinationSelected: (i) => setState(() => _mode = PracticeMode.values[i]),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.sort_by_alpha), label: 'Letters'),
+          NavigationDestination(icon: Icon(Icons.abc), label: 'Groups'),
+          NavigationDestination(icon: Icon(Icons.menu_book), label: 'Words'),
+          NavigationDestination(icon: Icon(Icons.record_voice_over), label: 'QSO'),
+        ],
       ),
     );
   }
@@ -327,10 +491,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _actualWpm;
   late int _effectiveWpm;
   late EffectiveSpeedMode _effectiveMode;
-  late int _kochCount;
   late double _pitchSlider;
-  late int _groupSize;
-  late bool _wordsOnlyLearned;
   late int _displayDelayMs;
   late int _sessionLengthMinutes;
   late TextEditingController _sessionLengthController;
@@ -341,10 +502,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _actualWpm = widget.settings.actualWpm;
     _effectiveWpm = widget.settings.effectiveWpm;
     _effectiveMode = widget.settings.effectiveMode;
-    _kochCount = widget.settings.kochLearnedCount;
     _pitchSlider = _kValidTones.indexOf(widget.settings.frequencyHz).clamp(0, _kValidTones.length - 1).toDouble();
-    _groupSize = widget.settings.groupSize;
-    _wordsOnlyLearned = widget.settings.wordsOnlyLearnedLetters;
     _displayDelayMs = widget.settings.displayDelayMs;
     _sessionLengthMinutes = widget.settings.sessionLengthMinutes;
     _sessionLengthController = TextEditingController(text: '$_sessionLengthMinutes');
@@ -361,10 +519,11 @@ class _SettingsPageState extends State<SettingsPage> {
       ..actualWpm = _actualWpm
       ..effectiveWpm = _effectiveWpm
       ..effectiveMode = _effectiveMode
-      ..kochLearnedCount = _kochCount
+      ..kochLearnedCount = widget.settings.kochLearnedCount
       ..frequencyHz = _kValidTones[_pitchSlider.round().clamp(0, _kValidTones.length - 1)]
-      ..groupSize = _groupSize
-      ..wordsOnlyLearnedLetters = _wordsOnlyLearned
+      ..groupSize = widget.settings.groupSize
+      ..wordsOnlyLearnedLetters = widget.settings.wordsOnlyLearnedLetters
+      ..wordListType = widget.settings.wordListType
       ..displayDelayMs = _displayDelayMs
       ..sessionLengthMinutes = _sessionLengthMinutes);
   }
@@ -378,7 +537,7 @@ class _SettingsPageState extends State<SettingsPage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Setup'),
+          title: const Text('Settings'),
           leading: IconButton(icon: const Icon(Icons.close), onPressed: _save),
         ),
         body: SingleChildScrollView(
@@ -387,9 +546,9 @@ class _SettingsPageState extends State<SettingsPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Actual speed (WPM)', style: Theme.of(context).textTheme.labelLarge),
+            Text('Actual Speed ($_actualWpm WPM)', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _actualWpm.toDouble(), min: 5, max: 40, divisions: 35, label: '$_actualWpm', onChanged: (v) => setState(() => _actualWpm = v.round())),
-            Text('Effective speed (WPM)', style: Theme.of(context).textTheme.labelLarge),
+            Text('Effective Speed ($_effectiveWpm WPM)', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _effectiveWpm.toDouble(), min: 5, max: 40, divisions: 35, label: '$_effectiveWpm', onChanged: (v) => setState(() => _effectiveWpm = v.round())),
             Text('Effective speed mode', style: Theme.of(context).textTheme.labelLarge),
             SegmentedButton<EffectiveSpeedMode>(
@@ -401,38 +560,65 @@ class _SettingsPageState extends State<SettingsPage> {
               onSelectionChanged: (s) => setState(() => _effectiveMode = s.first),
             ),
             const SizedBox(height: 8),
-            Text('Characters learned (Koch, 2–40)', style: Theme.of(context).textTheme.labelLarge),
-            Slider(value: _kochCount.toDouble(), min: 2, max: 40, divisions: 38, label: '$_kochCount', onChanged: (v) => setState(() => _kochCount = v.round())),
-            Text('CW pitch (Hz)', style: Theme.of(context).textTheme.labelLarge),
+            Text('Pitch (${_kValidTones[_pitchSlider.round()]} Hz)', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _pitchSlider, min: 0, max: (_kValidTones.length - 1).toDouble(), divisions: _kValidTones.length - 1, label: '${_kValidTones[_pitchSlider.round()]}', onChanged: (v) => setState(() => _pitchSlider = v)),
-            Text('Group size (for Groups mode)', style: Theme.of(context).textTheme.labelLarge),
-            Slider(value: _groupSize.toDouble(), min: 2, max: 10, divisions: 8, label: '$_groupSize', onChanged: (v) => setState(() => _groupSize = v.round())),
-            CheckboxListTile(
-              title: const Text('Words: only learned letters'),
-              value: _wordsOnlyLearned,
-              onChanged: (v) => setState(() => _wordsOnlyLearned = v ?? true),
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-            ),
             const SizedBox(height: 8),
-            Text('Display delay (ms) – when to show received text', style: Theme.of(context).textTheme.labelLarge),
+            Text('Display Delay ($_displayDelayMs ms)', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _displayDelayMs.toDouble(), min: 0, max: 5000, divisions: 50, label: '$_displayDelayMs', onChanged: (v) => setState(() => _displayDelayMs = v.round())),
             const SizedBox(height: 8),
-            Text('Session length (minutes, 0 = unlimited)', style: Theme.of(context).textTheme.labelLarge),
+            Text('Session Length ($_sessionLengthMinutes min)', style: Theme.of(context).textTheme.labelLarge),
             const SizedBox(height: 4),
-            TextField(
-              controller: _sessionLengthController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'e.g. 5',
-              ),
-              onChanged: (v) {
-                final parsed = int.tryParse(v);
-                if (parsed != null && parsed >= 0) {
-                  _sessionLengthMinutes = parsed;
-                }
-              },
+            Row(
+              children: [
+                IconButton.filled(
+                  onPressed: _sessionLengthMinutes > 0
+                      ? () => setState(() {
+                            _sessionLengthMinutes--;
+                            _sessionLengthController.text = '$_sessionLengthMinutes';
+                          })
+                      : null,
+                  icon: const Icon(Icons.remove),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _sessionLengthController,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: 'e.g. 5',
+                    ),
+                    onChanged: (v) {
+                      final parsed = int.tryParse(v);
+                      if (parsed != null && parsed >= 0) {
+                        setState(() => _sessionLengthMinutes = parsed);
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: () => setState(() {
+                    _sessionLengthMinutes++;
+                    _sessionLengthController.text = '$_sessionLengthMinutes';
+                  }),
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            OutlinedButton(
+              onPressed: () => setState(() {
+                _actualWpm = 20;
+                _effectiveWpm = 15;
+                _effectiveMode = EffectiveSpeedMode.farnsworth;
+                _pitchSlider = _kValidTones.indexOf(700).toDouble();
+                _displayDelayMs = 400;
+                _sessionLengthMinutes = 5;
+                _sessionLengthController.text = '5';
+              }),
+              child: const Text('Reset to defaults'),
             ),
           ],
         ),
