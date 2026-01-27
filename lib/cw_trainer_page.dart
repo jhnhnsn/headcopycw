@@ -104,6 +104,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   List<List<String>> _qsos = [];
   int _currentQsoIndex = -1;
   int _currentQsoLine = 0;
+  bool _startingNewQso = false;
 
   @override
   void initState() {
@@ -120,12 +121,24 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
       setState(() {
         _cwWords = cwText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
         _englishWords = englishText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
-        _qsos = qsoText
-            .split('---QSO---')
-            .map((q) => q.trim())
-            .where((q) => q.isNotEmpty)
-            .map((q) => q.split('\n').map((l) => l.trim().toUpperCase()).where((l) => l.isNotEmpty).join(' '))
-            .toList();
+        // Parse QSOs between ---QSO START--- and ---QSO END--- markers
+        final qsoBlocks = <List<String>>[];
+        final lines = qsoText.split('\n');
+        List<String>? currentQso;
+        for (final line in lines) {
+          final trimmed = line.trim().toUpperCase();
+          if (trimmed == '---QSO START---') {
+            currentQso = [];
+          } else if (trimmed == '---QSO END---') {
+            if (currentQso != null && currentQso.isNotEmpty) {
+              qsoBlocks.add(currentQso);
+            }
+            currentQso = null;
+          } else if (currentQso != null && trimmed.isNotEmpty) {
+            currentQso.add(trimmed);
+          }
+        }
+        _qsos = qsoBlocks;
       });
     }
   }
@@ -198,9 +211,24 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   }
 
   String _nextQso() {
-    final list = _qsos.isNotEmpty ? _qsos : kQsoPhrases;
-    if (list.isEmpty) return '';
-    return list[_rnd.nextInt(list.length)];
+    // Fallback to built-in phrases if no QSOs loaded
+    if (_qsos.isEmpty) {
+      if (kQsoPhrases.isEmpty) return '';
+      _startingNewQso = true;
+      return kQsoPhrases[_rnd.nextInt(kQsoPhrases.length)];
+    }
+    // Pick a new random QSO if needed
+    if (_currentQsoIndex < 0 || _currentQsoLine >= _qsos[_currentQsoIndex].length) {
+      _startingNewQso = _currentQsoIndex >= 0; // True if we just finished a QSO
+      _currentQsoIndex = _rnd.nextInt(_qsos.length);
+      _currentQsoLine = 0;
+    } else {
+      _startingNewQso = false;
+    }
+    // Return the next line of the current QSO
+    final line = _qsos[_currentQsoIndex][_currentQsoLine];
+    _currentQsoLine++;
+    return line;
   }
 
   String _nextPayload() {
@@ -219,6 +247,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   Future<void> _playNext() async {
     if (!_running) return;
     final text = _nextPayload();
+    final isNewQso = _startingNewQso; // Capture before next call changes it
     if (text.isEmpty) {
       _scheduleNext();
       return;
@@ -233,12 +262,21 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     _completeSub?.cancel();
     _completeSub = _player.onPlayerComplete.listen((_) {
       if (!_running) return;
-      final sep = _mode == PracticeMode.qso ? '\n' : ' ';
       // Delay only the display of what was just played.
       Future.delayed(Duration(milliseconds: _settings.displayDelayMs), () {
         if (!mounted) return;
         setState(() {
-          _displayText = _displayText.isEmpty ? text : '$_displayText$sep$text';
+          if (_mode == PracticeMode.qso) {
+            if (_displayText.isEmpty) {
+              _displayText = text;
+            } else if (isNewQso) {
+              _displayText = '$_displayText\n\n— — —\n\n$text';
+            } else {
+              _displayText = '$_displayText\n$text';
+            }
+          } else {
+            _displayText = _displayText.isEmpty ? text : '$_displayText $text';
+          }
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollController.hasClients) {
@@ -255,9 +293,12 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
 
   void _scheduleNext() {
     if (!_running) return;
-    final delay = _mode == PracticeMode.groups
-        ? const Duration(milliseconds: 700)
-        : Duration.zero;
+    Duration delay = Duration.zero;
+    if (_mode == PracticeMode.groups) {
+      delay = const Duration(milliseconds: 700);
+    } else if (_mode == PracticeMode.qso && _startingNewQso) {
+      delay = const Duration(milliseconds: 1500);
+    }
     Future.delayed(delay, _playNext);
   }
 
@@ -274,6 +315,9 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
       _running = true;
       _displayText = '';
       _remainingSeconds = _settings.sessionLengthMinutes * 60;
+      _currentQsoIndex = -1;
+      _currentQsoLine = 0;
+      _startingNewQso = false;
     });
     // Start session timer if session length is set
     _sessionTimer?.cancel();
