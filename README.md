@@ -1,6 +1,4 @@
 # Head Copy CW Trainer
-
-# Head Copy CW Trainer
 This is heavily inspired by the excellent CW trainer G4FON (https://www.g4fon.net/). I'm still learning CW myself and wanted something I could use on my phone. Much of the information in this help file is inspired by the info found on the G4FON site but modified for the layout of this app. 
 
 I'm releasing this as open source. Source should be available here: https://github.com/jhnhnsn/cwtrainer
