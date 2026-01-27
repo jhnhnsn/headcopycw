@@ -1,4 +1,23 @@
-# The Koch Method
+# Head Copy CW Trainer
+This is heavily inspired by the excellent CW trainer G4FON (https://www.g4fon.net/). I'm still learning CW myself and wanted something I could use on my phone. Much of the information in this help file is inspired by the info found on the G4FON site but modified for the layout of this app. 
+
+I'm releasing this as open source. Source should be available here: https://github.com/jhnhnsn/cwtrainer
+
+Bugs, ideas, fixes are all welcome. Share and enjoy!
+
+## Quick Start
+
+### Get set up
+Get a pen (or pencil) and paper and start this app on Letters
+
+### Do a session
+1. Start with "Letters" with slider set to "2"
+2. The app will start playing the first 2 letters. Don't look at the screen.
+3. Write down the letters you hear on the paper until the session ends.
+4. At the end of the session compare what you wrote to the letters on the screen
+5. Once you're able to get around 90% accuracy consistently move the slider up to 3 letters.
+
+## The Koch Method
 
 The Koch method is a proven technique for learning Morse code that builds reflexive responses to individual characters. Unlike traditional methods that start slow and gradually increase speed, the Koch method has you learn at your target speed from the very beginning.
 
@@ -49,6 +68,35 @@ The Koch method is a proven technique for learning Morse code that builds reflex
 **Display Delay** - How long to wait before showing text after it is sent. Longer delays encourage head copy.
 
 **Session Length** - Practice duration in minutes. Set to 0 for unlimited sessions.
+
+## Custom Files
+
+You can customize the word lists, QSO content, and even this help file. Go to **Settings** and tap **Open custom files folder** to access your editable files. Use **Reset files to defaults** to restore the original versions.
+
+- **cw-words.txt** - CW abbreviations and ham radio terms (one word per line)
+- **common-english-words.txt** - Common English words (one word per line)
+- **qsos.txt** - Practice QSO content (see format below)
+- **HELP.md** - This help file (Markdown format)
+
+### QSO File Format
+
+QSOs are defined between `---QSO START---` and `---QSO END---` markers. Each line within a QSO block is played separately:
+
+```
+---QSO START---
+CQ CQ CQ DE W1ABC W1ABC K
+W1ABC DE K2XYZ K2XYZ KN
+K2XYZ DE W1ABC GM UR RST 599 599
+---QSO END---
+```
+
+### File Locations
+
+- **Windows**: `%APPDATA%\com.example\head_copy_cw_trainer\assets\`
+- **macOS**: `~/Library/Application Support/com.example.helloWorldApp/assets/`
+- **Linux**: `~/.local/share/head_copy_cw_trainer/assets/`
+- **iOS**: Files app → On My iPhone → Head Copy → assets
+- **Android**: Use a file manager to browse app documents
 
 ## Tips for Success
 

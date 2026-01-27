@@ -1,14 +1,158 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'morse_data.dart';
 import 'morse_engine.dart';
+
+/// Returns the assets directory path for user-editable files.
+/// On Windows/macOS/Linux, files are stored in application support directory.
+/// On iOS/Android, files are stored in documents directory for user access.
+/// Returns null on web (use bundled assets instead).
+Future<Directory?> getAssetsDirectory() async {
+  if (kIsWeb) {
+    return null;
+  }
+
+  Directory appDir;
+  if (Platform.isIOS || Platform.isAndroid) {
+    // Use documents directory on mobile so users can access/edit files
+    appDir = await getApplicationDocumentsDirectory();
+  } else {
+    appDir = await getApplicationSupportDirectory();
+  }
+
+  final assetsDir = Directory('${appDir.path}${Platform.pathSeparator}assets');
+  if (!await assetsDir.exists()) {
+    await assetsDir.create(recursive: true);
+  }
+  return assetsDir;
+}
+
+const _assetFiles = [
+  'cw-words.txt',
+  'common-english-words.txt',
+  'qsos.txt',
+  'HELP.md',
+];
+
+/// Copies bundled assets to the user's assets directory if they don't exist.
+Future<void> initializeUserAssets() async {
+  final assetsDir = await getAssetsDirectory();
+  if (assetsDir == null) return;
+
+  for (final fileName in _assetFiles) {
+    final file = File('${assetsDir.path}${Platform.pathSeparator}$fileName');
+    if (!await file.exists()) {
+      try {
+        final content = await rootBundle.loadString('assets/$fileName');
+        await file.writeAsString(content);
+      } catch (e) {
+        // Asset not found or write failed, skip
+      }
+    }
+  }
+}
+
+/// Resets all user assets to the bundled defaults.
+Future<void> resetUserAssets() async {
+  final assetsDir = await getAssetsDirectory();
+  if (assetsDir == null) return;
+
+  for (final fileName in _assetFiles) {
+    final file = File('${assetsDir.path}${Platform.pathSeparator}$fileName');
+    try {
+      final content = await rootBundle.loadString('assets/$fileName');
+      await file.writeAsString(content);
+    } catch (e) {
+      // Asset not found or write failed, skip
+    }
+  }
+}
+
+/// Loads a text file, preferring the user's copy if available.
+Future<String> loadAssetFile(String fileName) async {
+  final assetsDir = await getAssetsDirectory();
+  if (assetsDir != null) {
+    final file = File('${assetsDir.path}${Platform.pathSeparator}$fileName');
+    if (await file.exists()) {
+      return await file.readAsString();
+    }
+  }
+  // Fall back to bundled asset
+  return await rootBundle.loadString('assets/$fileName');
+}
+
+/// Opens the assets folder in the system file browser.
+/// On mobile, shows a dialog with the path since direct folder opening isn't supported.
+Future<void> openAssetsFolder(BuildContext context) async {
+  final assetsDir = await getAssetsDirectory();
+  if (assetsDir == null) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Custom files not supported on this platform')),
+      );
+    }
+    return;
+  }
+
+  final path = assetsDir.path;
+
+  if (Platform.isWindows) {
+    await Process.run('explorer.exe', [path]);
+  } else if (Platform.isMacOS) {
+    await Process.run('open', [path]);
+  } else if (Platform.isLinux) {
+    await Process.run('xdg-open', [path]);
+  } else {
+    // Mobile platforms: show dialog with path
+    if (context.mounted) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Assets Folder'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Your custom files are stored at:'),
+              const SizedBox(height: 12),
+              SelectableText(
+                path,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              if (Platform.isIOS)
+                const Text(
+                  'Open the Files app → On My iPhone → Head Copy → assets',
+                  style: TextStyle(fontStyle: FontStyle.italic),
+                ),
+              if (Platform.isAndroid)
+                const Text(
+                  'Use a file manager app to navigate to this folder.',
+                  style: TextStyle(fontStyle: FontStyle.italic),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+}
 
 enum PracticeMode { characters, groups, words, qso }
 
@@ -110,6 +254,11 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   @override
   void initState() {
     super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    await initializeUserAssets();
     _loadPreferences();
     _loadWordLists();
     _checkFirstLaunch();
@@ -135,9 +284,9 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   }
 
   Future<void> _loadWordLists() async {
-    final cwText = await rootBundle.loadString('assets/cw-words.txt');
-    final englishText = await rootBundle.loadString('assets/common-english-words.txt');
-    final qsoText = await rootBundle.loadString('assets/qsos.txt');
+    final cwText = await loadAssetFile('cw-words.txt');
+    final englishText = await loadAssetFile('common-english-words.txt');
+    final qsoText = await loadAssetFile('qsos.txt');
     if (mounted) {
       setState(() {
         _cwWords = cwText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
@@ -697,6 +846,46 @@ class _SettingsPageState extends State<SettingsPage> {
               }),
               child: const Text('Reset to defaults'),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => openAssetsFolder(context),
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Open custom files folder'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Reset Files'),
+                    content: const Text(
+                      'This will overwrite your custom files with the default versions. Are you sure?',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        child: const Text('Reset'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true && context.mounted) {
+                  await resetUserAssets();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Files reset to defaults')),
+                    );
+                  }
+                }
+              },
+              icon: const Icon(Icons.restore),
+              label: const Text('Reset files to defaults'),
+            ),
           ],
         ),
       ),
@@ -722,7 +911,7 @@ class _InfoPageState extends State<InfoPage> {
   }
 
   Future<void> _loadHelp() async {
-    final content = await rootBundle.loadString('assets/HELP.md');
+    final content = await loadAssetFile('HELP.md');
     if (mounted) {
       setState(() => _helpContent = content);
     }

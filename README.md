@@ -1,6 +1,23 @@
 # Head Copy CW Trainer
 
-A cross-platform Morse code training application using the Koch method. Built with Flutter for Android, iOS, Windows, macOS, and Linux.
+# Head Copy CW Trainer
+This is heavily inspired by the excellent CW trainer G4FON (https://www.g4fon.net/). I'm still learning CW myself and wanted something I could use on my phone. Much of the information in this help file is inspired by the info found on the G4FON site but modified for the layout of this app. 
+
+I'm releasing this as open source. Source should be available here: https://github.com/jhnhnsn/cwtrainer
+
+Bugs, ideas, fixes are all welcome. Share and enjoy!
+
+## Quick Start
+
+### Get set up
+Get a pen (or pencil) and paper and start this app on Letters
+
+### Do a session
+1. Start with "Letters" with slider set to "2"
+2. The app will start playing the first 2 letters. Don't look at the screen.
+3. Write down the letters you hear on the paper until the session ends.
+4. At the end of the session compare what you wrote to the letters on the screen
+5. Once you're able to get around 90% accuracy consistently move the slider up to 3 letters.
 
 ## The Koch Method
 
@@ -115,5 +132,5 @@ This project is open source. See the LICENSE file for details.
 
 ## Acknowledgments
 
-- Koch method training approach inspired by the G4FON Koch Trainer
+- Koch method training approach heavily inspired by the G4FON Koch Trainer
 
