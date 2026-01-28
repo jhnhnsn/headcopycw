@@ -191,11 +191,4 @@ jobs:
             release-assets/linux-build/head_copy_linux.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Delete artifacts after release
-        uses: geekyeggo/delete-artifact@v4
-        with:
-          name: |
-            android-apk
-            windows-build
-            linux-build
+      # Artifacts auto-delete after 1 day (retention-days: 1)
