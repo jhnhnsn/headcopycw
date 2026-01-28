@@ -10,6 +10,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'main.dart' show resetWindowSize;
 import 'morse_data.dart';
 import 'morse_engine.dart';
 
@@ -680,7 +681,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                IconButton.filled(
+                IconButton(
                   onPressed: _openInfo,
                   icon: const Icon(Icons.help_outline),
                   tooltip: 'Help',
@@ -835,15 +836,18 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(height: 24),
             OutlinedButton(
-              onPressed: () => setState(() {
-                _actualWpm = 20;
-                _effectiveWpm = 15;
-                _effectiveMode = EffectiveSpeedMode.farnsworth;
-                _pitchSlider = _kValidTones.indexOf(700).toDouble();
-                _displayDelayMs = 400;
-                _sessionLengthMinutes = 5;
-                _sessionLengthController.text = '5';
-              }),
+              onPressed: () {
+                setState(() {
+                  _actualWpm = 20;
+                  _effectiveWpm = 15;
+                  _effectiveMode = EffectiveSpeedMode.farnsworth;
+                  _pitchSlider = _kValidTones.indexOf(700).toDouble();
+                  _displayDelayMs = 400;
+                  _sessionLengthMinutes = 5;
+                  _sessionLengthController.text = '5';
+                });
+                resetWindowSize();
+              },
               child: const Text('Reset to defaults'),
             ),
             const SizedBox(height: 12),
