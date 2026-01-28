@@ -8,8 +8,36 @@ on:
     # Allow manual triggering
 
 jobs:
+  check-changes:
+    name: Check for changes
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes in last 24 hours
+        id: check
+        run: |
+          # For manual runs, always build
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # For scheduled runs, check for commits in last 24 hours
+          COMMITS=$(git log --oneline --since="24 hours ago" | wc -l)
+          if [ "$COMMITS" -gt 0 ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
   build-android:
     name: Build Android APK
+    needs: check-changes
+    if: needs.check-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,14 +60,20 @@ jobs:
       - name: Build APK
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Rename APK
+        run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/head_copy.apk
+
+      - name: Upload APK for release job
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/head_copy.apk
+          retention-days: 1
 
   build-windows:
     name: Build Windows
+    needs: check-changes
+    if: needs.check-changes.outputs.has_changes == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,14 +93,17 @@ jobs:
       - name: Create ZIP archive
         run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath head_copy_windows.zip
 
-      - name: Upload Windows build
+      - name: Upload Windows build for release job
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
           path: head_copy_windows.zip
+          retention-days: 1
 
   build-linux:
     name: Build Linux
+    needs: check-changes
+    if: needs.check-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +111,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -91,8 +128,74 @@ jobs:
       - name: Create tarball
         run: tar -czvf head_copy_linux.tar.gz -C build/linux/x64/release/bundle .
 
-      - name: Upload Linux build
+      - name: Upload Linux build for release job
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
           path: head_copy_linux.tar.gz
+          retention-days: 1
+
+  create-release:
+    name: Create Release
+    needs: [check-changes, build-android, build-windows, build-linux]
+    if: needs.check-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Get version from pubspec
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          DATE=$(date +'%Y%m%d')
+          TAG="nightly-$DATE"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Delete existing release with same tag
+        run: |
+          gh release delete ${{ steps.tag.outputs.tag }} --yes || true
+          git push origin :refs/tags/${{ steps.tag.outputs.tag }} || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Nightly Build ${{ steps.tag.outputs.tag }}
+          body: |
+            Automated nightly build from ${{ github.sha }}
+
+            Version: ${{ steps.version.outputs.version }}
+
+            **Downloads:**
+            - `head_copy.apk` - Android APK (sideload)
+            - `head_copy_windows.zip` - Windows (extract and run)
+            - `head_copy_linux.tar.gz` - Linux (extract and run)
+          prerelease: true
+          files: |
+            release-assets/android-apk/head_copy.apk
+            release-assets/windows-build/head_copy_windows.zip
+            release-assets/linux-build/head_copy_linux.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete artifacts after release
+        uses: geekyeggo/delete-artifact@v4
+        with:
+          name: |
+            android-apk
+            windows-build
+            linux-build
