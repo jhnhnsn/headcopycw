@@ -241,6 +241,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   CwTrainerSettings _settings = CwTrainerSettings();
   PracticeMode _mode = PracticeMode.characters;
   bool _running = false;
+  bool _paused = false;
   String _displayText = '';
   StreamSubscription? _completeSub;
   Timer? _sessionTimer;
@@ -412,7 +413,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   }
 
   Future<void> _playNext() async {
-    if (!_running) return;
+    if (!_running || _paused) return;
     final text = _nextPayload();
     final isNewQso = _startingNewQso; // Capture before next call changes it
     if (text.isEmpty) {
@@ -459,7 +460,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   }
 
   void _scheduleNext() {
-    if (!_running) return;
+    if (!_running || _paused) return;
     Duration delay = Duration.zero;
     if (_mode == PracticeMode.words || _mode == PracticeMode.groups) {
       // 7 dits inter-word gap at effective speed
@@ -471,9 +472,26 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     Future.delayed(delay, _playNext);
   }
 
+  Future<void> _togglePause() async {
+    if (!_running) return;
+    if (_paused) {
+      // Resume
+      setState(() => _paused = false);
+      _playNext();
+    } else {
+      // Pause
+      setState(() => _paused = true);
+      await _player.stop();
+      _completeSub?.cancel();
+    }
+  }
+
   Future<void> _toggleRun() async {
     if (_running) {
-      setState(() => _running = false);
+      setState(() {
+        _running = false;
+        _paused = false;
+      });
       await _player.stop();
       _completeSub?.cancel();
       _sessionTimer?.cancel();
@@ -482,6 +500,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     }
     setState(() {
       _running = true;
+      _paused = false;
       _displayText = '';
       _remainingSeconds = _settings.sessionLengthMinutes * 60;
       _currentQsoIndex = -1;
@@ -498,7 +517,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
         }
       });
       _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted || !_running) return;
+        if (!mounted || !_running || _paused) return;
         setState(() {
           if (_remainingSeconds > 0) _remainingSeconds--;
         });
@@ -570,6 +589,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
         foregroundColor: Colors.white,
         title: Text(_modeName),
         actions: [
+          IconButton(icon: const Icon(Icons.help_outline), tooltip: 'Help', onPressed: _openInfo),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSetup),
         ],
       ),
@@ -659,7 +679,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
                   textAlign: TextAlign.center,
                 ),
               ),
-            // Start / Stop with Info button
+            // Start / Stop / Pause buttons
             Row(
               children: [
                 Expanded(
@@ -674,12 +694,14 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: _openInfo,
-                  icon: const Icon(Icons.help_outline),
-                  tooltip: 'Help',
-                ),
+                if (_running) ...[
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _togglePause,
+                    icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
+                    tooltip: _paused ? 'Resume' : 'Pause',
+                  ),
+                ],
               ],
             ),
           ],
