@@ -42,6 +42,7 @@ const _assetFiles = [
   'cw-words.txt',
   'common-english-words.txt',
   'qsos.txt',
+  'callsigns.txt',
   'HELP.md',
 ];
 
@@ -157,14 +158,14 @@ Future<void> openAssetsFolder(BuildContext context) async {
 
 enum PracticeMode { characters, groups, words, qso }
 
-enum WordListType { cwWords, englishWords, learnedLetters }
+enum WordListType { cwWords, commonWords, callsigns }
 
 WordListType _parseWordListType(String? value) {
   switch (value) {
-    case 'english':
-      return WordListType.englishWords;
-    case 'learned':
-      return WordListType.learnedLetters;
+    case 'common':
+      return WordListType.commonWords;
+    case 'callsigns':
+      return WordListType.callsigns;
     default:
       return WordListType.cwWords;
   }
@@ -172,10 +173,10 @@ WordListType _parseWordListType(String? value) {
 
 String _wordListTypeToString(WordListType type) {
   switch (type) {
-    case WordListType.englishWords:
-      return 'english';
-    case WordListType.learnedLetters:
-      return 'learned';
+    case WordListType.commonWords:
+      return 'common';
+    case WordListType.callsigns:
+      return 'callsigns';
     case WordListType.cwWords:
       return 'cw';
   }
@@ -246,7 +247,8 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   Timer? _countdownTimer;
   int _remainingSeconds = 0;
   List<String> _cwWords = [];
-  List<String> _englishWords = [];
+  List<String> _commonWords = [];
+  List<String> _callsigns = [];
   List<List<String>> _qsos = [];
   int _currentQsoIndex = -1;
   int _currentQsoLine = 0;
@@ -287,11 +289,13 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   Future<void> _loadWordLists() async {
     final cwText = await loadAssetFile('cw-words.txt');
     final englishText = await loadAssetFile('common-english-words.txt');
+    final callsignsText = await loadAssetFile('callsigns.txt');
     final qsoText = await loadAssetFile('qsos.txt');
     if (mounted) {
       setState(() {
         _cwWords = cwText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
-        _englishWords = englishText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
+        _commonWords = englishText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
+        _callsigns = callsignsText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
         // Parse QSOs between ---QSO START--- and ---QSO END--- markers
         final qsoBlocks = <List<String>>[];
         final lines = qsoText.split('\n');
@@ -340,20 +344,17 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   }
 
   List<String> get _filteredWords {
-    final allowed = _learned;
-    if (_settings.wordListType == WordListType.learnedLetters) {
-      // Use built-in words filtered by learned letters (2+ chars only)
-      return kWords.where((w) => w.length >= 2 && wordUsesOnly(w, allowed)).toList();
-    }
-    final source = _settings.wordListType == WordListType.cwWords ? _cwWords : _englishWords;
-    if (_settings.wordsOnlyLearnedLetters) {
-      return source.where((w) => wordUsesOnly(w, allowed)).toList();
-    }
+    final source = _settings.wordListType == WordListType.cwWords
+        ? _cwWords
+        : _settings.wordListType == WordListType.commonWords
+            ? _commonWords
+            : _callsigns;
+    // No filtering by learned letters - show all words
     return source.where((w) => w.split('').every((c) => kMorseCode.containsKey(c))).toList();
   }
 
-  bool get _hasLearnedWords {
-    return kWords.any((w) => w.length >= 2 && wordUsesOnly(w, _learned));
+  bool get _hasWords {
+    return _filteredWords.isNotEmpty;
   }
 
   String _nextCharacters() {
@@ -372,11 +373,6 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
 
   String _nextWord() {
     var list = _filteredWords;
-    // If no words match the filter, use the full word list
-    if (list.isEmpty) {
-      final source = _settings.wordListType == WordListType.cwWords ? _cwWords : _englishWords;
-      list = source.where((w) => w.split('').every((c) => kMorseCode.containsKey(c))).toList();
-    }
     if (list.isEmpty) return '';
     return list[_rnd.nextInt(list.length)];
   }
@@ -618,8 +614,8 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
               SegmentedButton<WordListType>(
                 segments: const [
                   ButtonSegment(value: WordListType.cwWords, label: Text('CW')),
-                  ButtonSegment(value: WordListType.englishWords, label: Text('English')),
-                  ButtonSegment(value: WordListType.learnedLetters, label: Text('Learned')),
+                  ButtonSegment(value: WordListType.commonWords, label: Text('Common')),
+                  ButtonSegment(value: WordListType.callsigns, label: Text('Callsigns')),
                 ],
                 selected: {_settings.wordListType},
                 onSelectionChanged: (s) => _updateWordListType(s.first),
@@ -650,13 +646,11 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
             ),
             const SizedBox(height: 16),
             // Error message
-            if (_mode == PracticeMode.words &&
-                _settings.wordListType == WordListType.learnedLetters &&
-                !_hasLearnedWords)
+            if (_mode == PracticeMode.words && !_hasWords)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
-                  'Not enough letters learned to make a word yet',
+                  'No words available',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.error,
                   ),
@@ -668,9 +662,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
               children: [
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: (_mode == PracticeMode.words &&
-                                _settings.wordListType == WordListType.learnedLetters &&
-                                !_hasLearnedWords)
+                    onPressed: (_mode == PracticeMode.words && !_hasWords)
                         ? null
                         : _toggleRun,
                     icon: Icon(_running ? Icons.stop : Icons.play_arrow),

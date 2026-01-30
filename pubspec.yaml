@@ -26,4 +26,5 @@ flutter:
     - assets/cw-words.txt
     - assets/common-english-words.txt
     - assets/qsos.txt
+    - assets/callsigns.txt
     - assets/HELP.md
