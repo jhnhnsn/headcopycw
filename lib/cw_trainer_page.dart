@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -234,7 +235,8 @@ class CwTrainerPage extends StatefulWidget {
   State<CwTrainerPage> createState() => _CwTrainerPageState();
 }
 
-class _CwTrainerPageState extends State<CwTrainerPage> {
+class _CwTrainerPageState extends State<CwTrainerPage>
+    with SingleTickerProviderStateMixin {
   final AudioPlayer _player = AudioPlayer();
   final Random _rnd = Random();
   final ScrollController _scrollController = ScrollController();
@@ -254,10 +256,15 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   int _currentQsoIndex = -1;
   int _currentQsoLine = 0;
   bool _startingNewQso = false;
+  AnimationController? _pauseFlashController;
 
   @override
   void initState() {
     super.initState();
+    _pauseFlashController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
     _initializeApp();
   }
 
@@ -331,6 +338,7 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     _sessionTimer?.cancel();
     _countdownTimer?.cancel();
     _scrollController.dispose();
+    _pauseFlashController?.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -476,11 +484,14 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
     if (!_running) return;
     if (_paused) {
       // Resume
+      _pauseFlashController?.stop();
+      _pauseFlashController?.reset();
       setState(() => _paused = false);
       _playNext();
     } else {
       // Pause
       setState(() => _paused = true);
+      _pauseFlashController?.repeat(reverse: true);
       await _player.stop();
       _completeSub?.cancel();
     }
@@ -488,6 +499,8 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
 
   Future<void> _toggleRun() async {
     if (_running) {
+      _pauseFlashController?.stop();
+      _pauseFlashController?.reset();
       setState(() {
         _running = false;
         _paused = false;
@@ -646,23 +659,41 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
             const SizedBox(height: 12),
             // Display (echo after sent)
             Expanded(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Theme.of(context).dividerColor),
-                ),
-                child: SingleChildScrollView(
-                  controller: _scrollController,
-                  child: SelectableText(
-                    _displayText.isEmpty ? '—' : _displayText,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontFamily: 'monospace',
-                          fontWeight: FontWeight.w500,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned.fill(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Theme.of(context).dividerColor),
                         ),
-                  ),
+                        child: SingleChildScrollView(
+                          controller: _scrollController,
+                          child: SelectableText(
+                            _displayText.isEmpty ? '—' : _displayText,
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontFamily: 'monospace',
+                                  fontWeight: FontWeight.w500,
+                                ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_running)
+                      Positioned.fill(
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                          child: Container(
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -696,10 +727,17 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
                 ),
                 if (_running) ...[
                   const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _togglePause,
-                    icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
-                    tooltip: _paused ? 'Resume' : 'Pause',
+                  AnimatedBuilder(
+                    animation: _pauseFlashController!,
+                    builder: (context, child) => Opacity(
+                      opacity: _paused ? 0.4 + 0.6 * _pauseFlashController!.value : 1.0,
+                      child: child,
+                    ),
+                    child: IconButton.filled(
+                      onPressed: _togglePause,
+                      icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
+                      tooltip: _paused ? 'Resume' : 'Pause',
+                    ),
                   ),
                 ],
               ],
