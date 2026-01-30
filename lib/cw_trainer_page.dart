@@ -461,8 +461,10 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   void _scheduleNext() {
     if (!_running) return;
     Duration delay = Duration.zero;
-    if (_mode == PracticeMode.groups) {
-      delay = const Duration(milliseconds: 700);
+    if (_mode == PracticeMode.words || _mode == PracticeMode.groups) {
+      // 7 dits inter-word gap at effective speed
+      final ditSeconds = _settings.effectiveWpm > 0 ? 1.2 / _settings.effectiveWpm : 0.06;
+      delay = Duration(milliseconds: (7 * ditSeconds * 1000).round());
     } else if (_mode == PracticeMode.qso && _startingNewQso) {
       delay = const Duration(milliseconds: 1500);
     }
