@@ -54,17 +54,27 @@ def load_secrets() -> dict:
 
 def load_version_info():
     text = PUBSPEC.read_text()
-    match = re.search(r"^version:\s*(\d+\.\d+\.\d+)\+(\d+)", text, re.MULTILINE)
+    match = re.search(r"^version:\s*(\d+)\.(\d+)\.(\d+)\+(\d+)", text, re.MULTILINE)
     if not match:
         sys.exit("ERROR: Could not parse version from pubspec.yaml")
-    return match.group(1), match.group(2)
+    return match.group(1), match.group(2), match.group(3), int(match.group(4))
+
+
+def bump_build_number():
+    major, minor, patch, build = load_version_info()
+    build += 1
+    text = PUBSPEC.read_text()
+    version_str = f"{major}.{minor}.{patch}+{build}"
+    text = re.sub(r"^version:\s*\S+", f"version: {version_str}", text, count=1, flags=re.MULTILINE)
+    PUBSPEC.write_text(text)
+    return f"{major}.{minor}.{patch}", str(build)
 
 
 # --- Build steps ---
 
 def build_ipa():
-    step(1, "Building IPA with Flutter (this may take a while)...")
-    marketing_version, build_number = load_version_info()
+    step(1, "Bumping build number and building IPA (this may take a while)...")
+    marketing_version, build_number = bump_build_number()
     print(f"       Version: {marketing_version} (build {build_number})")
 
     DIST_DIR.mkdir(exist_ok=True)

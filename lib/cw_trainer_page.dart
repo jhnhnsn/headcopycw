@@ -435,6 +435,10 @@ class _CwTrainerPageState extends State<CwTrainerPage>
       effectiveMode: _settings.effectiveMode,
     );
     final wav = segmentsToWav(segments, frequencyHz: _settings.frequencyHz.toDouble());
+    // Write WAV to temp file — BytesSource fails on iOS/macOS with AVPlayer
+    final tempDir = await getTemporaryDirectory();
+    final wavFile = File('${tempDir.path}/cw_tone.wav');
+    await wavFile.writeAsBytes(wav, flush: true);
     _completeSub?.cancel();
     _completeSub = _player.onPlayerComplete.listen((_) {
       if (!_running) return;
@@ -464,7 +468,7 @@ class _CwTrainerPageState extends State<CwTrainerPage>
       _scheduleNext();
     });
     await _player.stop();
-    await _player.play(BytesSource(wav));
+    await _player.play(DeviceFileSource(wavFile.path));
   }
 
   void _scheduleNext() {

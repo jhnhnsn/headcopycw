@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Bump version/build numbers and tag the release in git.
+"""Bump version numbers and tag the release in git.
+
+Build numbers are bumped automatically by the build scripts.
 
 Usage:
     ./release.py patch       # 1.0.0 → 1.0.1
     ./release.py minor       # 1.0.0 → 1.1.0
     ./release.py major       # 1.0.0 → 2.0.0
-    ./release.py build       # bump build number only (no version change)
     ./release.py             # show current version
 """
 
@@ -60,12 +61,6 @@ def bump(part):
     return v
 
 
-def bump_build():
-    v = load_version()
-    v["build"] += 1
-    save_version(v)
-    return v
-
 
 def tag_release(v):
     version = version_string(v)
@@ -94,12 +89,9 @@ def main():
     if part in ("major", "minor", "patch"):
         v = bump(part)
         tag_release(v)
-    elif part == "build":
-        v = bump_build()
-        tag_release(v)
     else:
         print(f"Unknown: {part}")
-        print("Usage: ./release.py [major|minor|patch|build]")
+        print("Usage: ./release.py [major|minor|patch]")
         sys.exit(1)
 
 

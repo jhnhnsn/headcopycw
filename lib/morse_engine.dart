@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'morse_data.dart';
 
@@ -187,7 +189,10 @@ Future<void> playMorseText({
     effectiveMode: effectiveMode,
   );
   final wav = segmentsToWav(segments, frequencyHz: frequencyHz);
-  await player.play(BytesSource(wav));
+  final tempDir = await getTemporaryDirectory();
+  final wavFile = File('${tempDir.path}/cw_tone.wav');
+  await wavFile.writeAsBytes(wav, flush: true);
+  await player.play(DeviceFileSource(wavFile.path));
   if (onComplete != null) {
     player.onPlayerComplete.listen((_) {
       onComplete();

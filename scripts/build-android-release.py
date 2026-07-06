@@ -20,15 +20,25 @@ def step(num, msg):
 
 def load_version_info():
     text = PUBSPEC.read_text()
-    match = re.search(r"^version:\s*(\d+\.\d+\.\d+)\+(\d+)", text, re.MULTILINE)
+    match = re.search(r"^version:\s*(\d+)\.(\d+)\.(\d+)\+(\d+)", text, re.MULTILINE)
     if not match:
         sys.exit("ERROR: Could not parse version from pubspec.yaml")
-    return match.group(1), int(match.group(2))
+    return match.group(1), match.group(2), match.group(3), int(match.group(4))
+
+
+def bump_build_number():
+    major, minor, patch, build = load_version_info()
+    build += 1
+    text = PUBSPEC.read_text()
+    version_str = f"{major}.{minor}.{patch}+{build}"
+    text = re.sub(r"^version:\s*\S+", f"version: {version_str}", text, count=1, flags=re.MULTILINE)
+    PUBSPEC.write_text(text)
+    return f"{major}.{minor}.{patch}", build
 
 
 def build_apk():
-    step(1, "Building APK and AAB with Flutter (this may take a while)...")
-    version, build = load_version_info()
+    step(1, "Bumping build number and building APK/AAB (this may take a while)...")
+    version, build = bump_build_number()
     print(f"       Version: {version} (build {build})")
 
     for target in ["apk", "appbundle"]:
