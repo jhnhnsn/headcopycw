@@ -36,6 +36,9 @@ migrate_working_dir/
 /coverage/
 ./devtools_options.yaml
 
+# CocoaPods lockfile generated on this machine (macOS platform folder)
+macos/Podfile.lock
+
 # Symbolication related
 app.*.symbols
 
