@@ -47,6 +47,26 @@ const List<String> kQsoPhrases = [
   'G4FON DE W1AW TNX JOHN BT 5NN BT QSL UR 599 MY 599 BT CU AGN G4FON DE W1AW SK',
 ];
 
+/// Parses QSO blocks from [text]. Each block is the lines between a
+/// `---QSO START---` and `---QSO END---` marker, uppercased and trimmed, with
+/// empty lines dropped. Empty blocks are skipped.
+List<List<String>> parseQsoBlocks(String text) {
+  final blocks = <List<String>>[];
+  List<String>? current;
+  for (final line in text.split('\n')) {
+    final trimmed = line.trim().toUpperCase();
+    if (trimmed == '---QSO START---') {
+      current = [];
+    } else if (trimmed == '---QSO END---') {
+      if (current != null && current.isNotEmpty) blocks.add(current);
+      current = null;
+    } else if (current != null && trimmed.isNotEmpty) {
+      current.add(trimmed);
+    }
+  }
+  return blocks;
+}
+
 /// Returns the first [count] characters in Koch order (learned set).
 List<String> kochLearnedSet(int count) {
   return kKochOrder.take(count.clamp(0, kKochOrder.length)).toList();

@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart' show resetWindowSize;
 import 'morse_data.dart';
 import 'morse_engine.dart';
+import 'adaptive/adaptive_page.dart';
 
 /// Returns the assets directory path for user-editable files.
 /// On Windows/macOS/Linux, files are stored in application support directory.
@@ -79,6 +80,15 @@ Future<void> resetUserAssets() async {
       // Asset not found or write failed, skip
     }
   }
+}
+
+/// Deletes the adaptive "Copy" mode progress file, resetting all SRS state.
+Future<void> resetAdaptiveProgress() async {
+  final assetsDir = await getAssetsDirectory();
+  if (assetsDir == null) return;
+  final file =
+      File('${assetsDir.path}${Platform.pathSeparator}adaptive_progress.json');
+  if (await file.exists()) await file.delete();
 }
 
 /// Loads a text file, preferring the user's copy if available.
@@ -157,7 +167,7 @@ Future<void> openAssetsFolder(BuildContext context) async {
   }
 }
 
-enum PracticeMode { characters, groups, words, qso }
+enum PracticeMode { adaptive, characters, groups, words, qso }
 
 enum WordListType { cwWords, commonWords, callsigns }
 
@@ -241,7 +251,11 @@ class _CwTrainerPageState extends State<CwTrainerPage>
   final Random _rnd = Random();
   final ScrollController _scrollController = ScrollController();
   CwTrainerSettings _settings = CwTrainerSettings();
-  PracticeMode _mode = PracticeMode.characters;
+  PracticeMode _mode = PracticeMode.adaptive;
+  Directory? _storageDir;
+  /// Bumped when Copy progress is reset, to force a fresh AdaptivePage (which
+  /// otherwise holds in-memory state that would re-save on dispose).
+  int _adaptiveEpoch = 0;
   bool _running = false;
   bool _paused = false;
   String _displayText = '';
@@ -270,6 +284,8 @@ class _CwTrainerPageState extends State<CwTrainerPage>
 
   Future<void> _initializeApp() async {
     await initializeUserAssets();
+    final dir = await getAssetsDirectory();
+    if (mounted) setState(() => _storageDir = dir);
     _loadPreferences();
     _loadWordLists();
     _checkFirstLaunch();
@@ -282,7 +298,7 @@ class _CwTrainerPageState extends State<CwTrainerPage>
       await prefs.setBool('hasSeenInfo', true);
       if (mounted) {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const InfoPage()),
+          MaterialPageRoute(builder: (_) => const WelcomePage()),
         );
       }
     }
@@ -290,7 +306,7 @@ class _CwTrainerPageState extends State<CwTrainerPage>
 
   void _openInfo() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const InfoPage()),
+      MaterialPageRoute(builder: (_) => const WelcomePage()),
     );
   }
 
@@ -304,24 +320,7 @@ class _CwTrainerPageState extends State<CwTrainerPage>
         _cwWords = cwText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
         _commonWords = englishText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
         _callsigns = callsignsText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
-        // Parse QSOs between ---QSO START--- and ---QSO END--- markers
-        final qsoBlocks = <List<String>>[];
-        final lines = qsoText.split('\n');
-        List<String>? currentQso;
-        for (final line in lines) {
-          final trimmed = line.trim().toUpperCase();
-          if (trimmed == '---QSO START---') {
-            currentQso = [];
-          } else if (trimmed == '---QSO END---') {
-            if (currentQso != null && currentQso.isNotEmpty) {
-              qsoBlocks.add(currentQso);
-            }
-            currentQso = null;
-          } else if (currentQso != null && trimmed.isNotEmpty) {
-            currentQso.add(trimmed);
-          }
-        }
-        _qsos = qsoBlocks;
+        _qsos = parseQsoBlocks(qsoText);
       });
     }
   }
@@ -409,6 +408,8 @@ class _CwTrainerPageState extends State<CwTrainerPage>
 
   String _nextPayload() {
     switch (_mode) {
+      case PracticeMode.adaptive:
+        return ''; // Adaptive mode runs its own loop (AdaptivePage).
       case PracticeMode.characters:
         return _nextCharacters();
       case PracticeMode.words:
@@ -428,17 +429,13 @@ class _CwTrainerPageState extends State<CwTrainerPage>
       _scheduleNext();
       return;
     }
-    final segments = textToMorseSegments(
+    final wavPath = await renderMorseWavFile(
       text: text,
       actualWpm: _settings.actualWpm,
       effectiveWpm: _settings.effectiveWpm,
       effectiveMode: _settings.effectiveMode,
+      frequencyHz: _settings.frequencyHz.toDouble(),
     );
-    final wav = segmentsToWav(segments, frequencyHz: _settings.frequencyHz.toDouble());
-    // Write WAV to temp file — BytesSource fails on iOS/macOS with AVPlayer
-    final tempDir = await getTemporaryDirectory();
-    final wavFile = File('${tempDir.path}/cw_tone.wav');
-    await wavFile.writeAsBytes(wav, flush: true);
     _completeSub?.cancel();
     _completeSub = _player.onPlayerComplete.listen((_) {
       if (!_running) return;
@@ -468,7 +465,7 @@ class _CwTrainerPageState extends State<CwTrainerPage>
       _scheduleNext();
     });
     await _player.stop();
-    await _player.play(DeviceFileSource(wavFile.path));
+    await _player.play(DeviceFileSource(wavPath));
   }
 
   void _scheduleNext() {
@@ -545,7 +542,15 @@ class _CwTrainerPageState extends State<CwTrainerPage>
 
   Future<void> _openSetup() async {
     final s = await Navigator.of(context).push<CwTrainerSettings>(
-      MaterialPageRoute(builder: (_) => SettingsPage(settings: _settings)),
+      MaterialPageRoute(
+        builder: (_) => SettingsPage(
+          settings: _settings,
+          onResetAdaptive: () {
+            AdaptivePageState.suppressNextDisposeFlush = true;
+            if (mounted) setState(() => _adaptiveEpoch++);
+          },
+        ),
+      ),
     );
     if (s != null && mounted) {
       final prefs = await SharedPreferences.getInstance();
@@ -556,6 +561,8 @@ class _CwTrainerPageState extends State<CwTrainerPage>
 
   String get _modeName {
     switch (_mode) {
+      case PracticeMode.adaptive:
+        return 'Copy';
       case PracticeMode.characters:
         return 'Letters';
       case PracticeMode.groups:
@@ -569,6 +576,8 @@ class _CwTrainerPageState extends State<CwTrainerPage>
 
   Color get _modeColor {
     switch (_mode) {
+      case PracticeMode.adaptive:
+        return Colors.teal;
       case PracticeMode.characters:
         return Colors.blue;
       case PracticeMode.groups:
@@ -600,17 +609,103 @@ class _CwTrainerPageState extends State<CwTrainerPage>
 
   @override
   Widget build(BuildContext context) {
+    final isAdaptive = _mode == PracticeMode.adaptive;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: _modeColor,
         foregroundColor: Colors.white,
+        // When in a drill, show a back arrow to return to Copy.
+        leading: isAdaptive
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Back to Copy',
+                onPressed: () => _switchMode(PracticeMode.adaptive),
+              ),
         title: Text(_modeName),
         actions: [
           IconButton(icon: const Icon(Icons.help_outline), tooltip: 'Help', onPressed: _openInfo),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSetup),
+          if (isAdaptive)
+            PopupMenuButton<PracticeMode>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Practice drills',
+              onSelected: _switchMode,
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  enabled: false,
+                  child: Text('Practice drills', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+                PopupMenuItem(value: PracticeMode.characters, child: Text('Letters')),
+                PopupMenuItem(value: PracticeMode.groups, child: Text('Groups')),
+                PopupMenuItem(value: PracticeMode.words, child: Text('Words')),
+                PopupMenuItem(value: PracticeMode.qso, child: Text('QSO')),
+              ],
+            ),
         ],
       ),
-      body: Padding(
+      body: isAdaptive ? _buildAdaptiveBody() : _buildLegacyBody(),
+      // Drills keep a small tab bar to switch between the four legacy modes.
+      bottomNavigationBar: isAdaptive
+          ? null
+          : NavigationBar(
+              selectedIndex: _drillIndex(_mode),
+              onDestinationSelected: (i) => _switchMode(_drillModes[i]),
+              destinations: const [
+                NavigationDestination(icon: Icon(Icons.sort_by_alpha), label: 'Letters'),
+                NavigationDestination(icon: Icon(Icons.abc), label: 'Groups'),
+                NavigationDestination(icon: Icon(Icons.menu_book), label: 'Words'),
+                NavigationDestination(icon: Icon(Icons.record_voice_over), label: 'QSO'),
+              ],
+            ),
+    );
+  }
+
+  static const List<PracticeMode> _drillModes = [
+    PracticeMode.characters,
+    PracticeMode.groups,
+    PracticeMode.words,
+    PracticeMode.qso,
+  ];
+
+  int _drillIndex(PracticeMode m) {
+    final i = _drillModes.indexOf(m);
+    return i < 0 ? 0 : i;
+  }
+
+  /// Switches practice mode, stopping any running legacy session first so a
+  /// drill's audio doesn't keep playing after you leave it.
+  void _switchMode(PracticeMode m) {
+    if (_running) {
+      _pauseFlashController?.stop();
+      _pauseFlashController?.reset();
+      _player.stop();
+      _completeSub?.cancel();
+      _sessionTimer?.cancel();
+      _countdownTimer?.cancel();
+      _running = false;
+      _paused = false;
+    }
+    setState(() => _mode = m);
+  }
+
+  Widget _buildAdaptiveBody() {
+    return AdaptivePage(
+      key: ValueKey('adaptive-$_adaptiveEpoch'),
+      storageDir: _storageDir,
+      settings: AdaptiveSettings(
+        actualWpm: _settings.actualWpm,
+        effectiveWpm: _settings.effectiveWpm,
+        effectiveMode: _settings.effectiveMode,
+        frequencyHz: _settings.frequencyHz,
+        bufferDelayMs: _settings.displayDelayMs,
+        sessionLengthMinutes: _settings.sessionLengthMinutes,
+      ),
+    );
+  }
+
+  Widget _buildLegacyBody() {
+    return Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -748,25 +843,15 @@ class _CwTrainerPageState extends State<CwTrainerPage>
             ),
           ],
         ),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: PracticeMode.values.indexOf(_mode),
-        onDestinationSelected: (i) => setState(() => _mode = PracticeMode.values[i]),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.sort_by_alpha), label: 'Letters'),
-          NavigationDestination(icon: Icon(Icons.abc), label: 'Groups'),
-          NavigationDestination(icon: Icon(Icons.menu_book), label: 'Words'),
-          NavigationDestination(icon: Icon(Icons.record_voice_over), label: 'QSO'),
-        ],
-      ),
-    );
+      );
   }
 }
 
 class SettingsPage extends StatefulWidget {
   final CwTrainerSettings settings;
+  final VoidCallback? onResetAdaptive;
 
-  const SettingsPage({super.key, required this.settings});
+  const SettingsPage({super.key, required this.settings, this.onResetAdaptive});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -948,9 +1033,169 @@ class _SettingsPageState extends State<SettingsPage> {
               icon: const Icon(Icons.restore),
               label: const Text('Reset files to defaults'),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Reset Copy Progress'),
+                    content: const Text(
+                      'This erases all adaptive Copy-mode progress (learned items, '
+                      'accuracy, and session history). This cannot be undone. Are you sure?',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        child: const Text('Reset'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true && context.mounted) {
+                  await resetAdaptiveProgress();
+                  widget.onResetAdaptive?.call();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Copy progress reset')),
+                    );
+                  }
+                }
+              },
+              icon: const Icon(Icons.delete_sweep),
+              label: const Text('Reset Copy progress'),
+            ),
           ],
         ),
       ),
+      ),
+    );
+  }
+}
+
+/// Lightweight first-launch / help intro: a short summary of the Copy approach
+/// and the science behind it, with a link to the full reference guide.
+class WelcomePage extends StatelessWidget {
+  const WelcomePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Head Copy CW Trainer')),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Copy: a faster way to learn CW',
+                      style: theme.textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Press Start, listen, then type what you heard — no paper, no peeking. '
+                    'The app adapts to you and grows your skill automatically.',
+                    style: theme.textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 24),
+                  _point(
+                    theme,
+                    icon: Icons.radio,
+                    title: 'Real contacts, from day one',
+                    body:
+                        'You train on the words, prosigns, and phrases you actually hear on '
+                        'the air — CQ, DE, 73, UR RST 599, HW CPY? — not endless random letters.',
+                  ),
+                  _point(
+                    theme,
+                    icon: Icons.hourglass_bottom,
+                    title: 'A pause that builds head copy',
+                    body:
+                        'A short delay before you answer trains you to hold the sound in your '
+                        'head and "copy behind," instead of scribbling letter by letter. It also '
+                        'times how fast you recognize each item, so you build instant recognition — '
+                        'not slow decoding.',
+                  ),
+                  _point(
+                    theme,
+                    icon: Icons.auto_stories,
+                    title: 'Whole words right away',
+                    body:
+                        'Instead of drilling single characters for weeks, you start hearing short '
+                        'words and phrases as single sound-shapes — the way skilled operators '
+                        'actually copy. Spaced repetition brings back what you miss and moves past '
+                        'what you know.',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'The science: meaningful chunks are learned and recalled far better than '
+                    'random strings, expert copy is whole-word recognition rather than letter '
+                    'decoding, and gating on recognition speed (not just accuracy) is what breaks '
+                    'through the classic plateau.',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: theme.hintColor),
+                  ),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const InfoPage()),
+                      ),
+                      icon: const Icon(Icons.menu_book),
+                      label: const Text('Full guide & classic Koch modes'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: const Text('Get Started'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _point(ThemeData theme,
+      {required IconData icon, required String title, required String body}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: theme.colorScheme.primary),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                Text(body, style: theme.textTheme.bodyMedium),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -5,6 +5,29 @@ I'm releasing this as open source. Source should be available here: https://gith
 
 Bugs, ideas, fixes are all welcome. Share and enjoy!
 
+## Copy — the adaptive mode (start here)
+
+**Copy** is the app's default mode and works differently from the classic Koch drills below. Instead of you dragging a slider and grading yourself on paper, Copy adapts to you automatically and trains you on **real on-air material from the very first session**.
+
+### How to use it
+1. Open **Copy** (the first tab) and press **Start**. No paper needed.
+2. Listen to the short bit of code. **Don't look** — the answer stays hidden.
+3. After a brief pause, a box appears. **Type what you heard** and press Enter (or Check).
+4. You'll see whether you were right, how fast you answered, and hear it again if you want. Press **Next** to continue.
+5. When your recent copy is solid, the app quietly introduces the next item.
+
+### Why it's built this way
+- **Type, don't write.** Writing each letter by hand while more code arrives overloads working memory and keeps you decoding letter-by-letter. Typing after a short buffer trains you to hold the sound in your head and "copy behind" — the way skilled operators do.
+- **Real words and phrases, not random letters.** You start on the highest-value on-air chunks — `CQ`, `DE`, `73`, `UR RST 599`, `HW CPY?`, `TNX FER CALL` — because meaningful chunks are learned and recalled far better than random strings, and experts hear common words as a single sound-shape rather than spelling them out.
+- **Frequency first.** A small set of prosigns, abbreviations, and common words covers most of a real QSO, so those come first for the biggest payoff.
+- **Spaced repetition.** Items you miss come back sooner; items you nail come back later. Weak spots get the practice; mastered material doesn't waste your time.
+- **Speed gate, not just accuracy.** Copy watches *how fast* you recognize each item, not only whether you get it right. A correct-but-slow answer means you're still consciously decoding, so a new item won't unlock until you're recognizing the current material **instantly** (about half a second). This is the key to breaking through the plateau that catches people who only chase accuracy.
+- **Let misses go.** If you don't catch something, don't stop to puzzle it out — take your best guess and move on. Getting the gist and continuing is exactly the skill real head copy needs.
+
+You can reset all Copy progress anytime from **Settings → Reset Copy progress**.
+
+The classic Koch modes below (Letters, Groups, Words, QSO) remain available as manual drills if you prefer paper-based practice or want to target something specific.
+
 ## Quick Start
 
 ### Get set up
@@ -46,6 +69,8 @@ The Koch method is a proven technique for learning Morse code that builds reflex
 - **No plateau frustration** - Unlike starting slow and hitting a wall at 10 WPM, you're already copying at your target speed.
 
 ## Practice Modes
+
+**Copy** - The adaptive, spaced-repetition mode described at the top of this guide. Type what you hear; the app adapts and unlocks new material as you gain instant recognition. This is the recommended default.
 
 **Letters** - Practice individual characters using the Koch method. Use the Letters slider to control how many characters are in your practice set.
 

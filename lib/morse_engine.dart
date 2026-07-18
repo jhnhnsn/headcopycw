@@ -170,6 +170,31 @@ Uint8List segmentsToWav(
   return buffer.buffer.asUint8List();
 }
 
+/// Renders [text] to a Morse WAV and writes it to a temp file, returning the
+/// path. Shared by the legacy practice loop and the adaptive "Copy" loop.
+/// A temp file (not BytesSource) is required because BytesSource fails on
+/// iOS/macOS with AVPlayer.
+Future<String> renderMorseWavFile({
+  required String text,
+  required int actualWpm,
+  required int effectiveWpm,
+  required double frequencyHz,
+  EffectiveSpeedMode effectiveMode = EffectiveSpeedMode.farnsworth,
+  String fileName = 'cw_tone.wav',
+}) async {
+  final segments = textToMorseSegments(
+    text: text,
+    actualWpm: actualWpm,
+    effectiveWpm: effectiveWpm,
+    effectiveMode: effectiveMode,
+  );
+  final wav = segmentsToWav(segments, frequencyHz: frequencyHz);
+  final tempDir = await getTemporaryDirectory();
+  final wavFile = File('${tempDir.path}/$fileName');
+  await wavFile.writeAsBytes(wav, flush: true);
+  return wavFile.path;
+}
+
 /// One-shot: generate and play [text] in Morse. Uses [actualWpm], [effectiveWpm],
 /// [effectiveMode], [frequencyHz]. [player] is used for playback; call [onComplete] when done.
 Future<void> playMorseText({
