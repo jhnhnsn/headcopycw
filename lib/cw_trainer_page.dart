@@ -208,6 +208,9 @@ class CwTrainerSettings {
   int displayDelayMs = 400;
   /// Session length in minutes (0 = unlimited).
   int sessionLengthMinutes = 5;
+  /// The learner's own callsign (uppercase, encodable), or '' if unset. Used in
+  /// the adaptive Copy curriculum and generated exchanges.
+  String callsign = '';
 
   static Future<CwTrainerSettings> load(SharedPreferences prefs) async {
     final hz = prefs.getInt('frequencyHz') ?? 700;
@@ -221,7 +224,8 @@ class CwTrainerSettings {
       ..wordsOnlyLearnedLetters = prefs.getBool('wordsOnlyLearnedLetters') ?? true
       ..wordListType = _parseWordListType(prefs.getString('wordListType'))
       ..displayDelayMs = prefs.getInt('displayDelayMs') ?? 400
-      ..sessionLengthMinutes = prefs.getInt('sessionLengthMinutes') ?? 5;
+      ..sessionLengthMinutes = prefs.getInt('sessionLengthMinutes') ?? 5
+      ..callsign = prefs.getString('callsign') ?? '';
   }
 
   static Future<void> save(SharedPreferences prefs, CwTrainerSettings s) async {
@@ -235,7 +239,19 @@ class CwTrainerSettings {
     await prefs.setString('wordListType', _wordListTypeToString(s.wordListType));
     await prefs.setInt('displayDelayMs', s.displayDelayMs);
     await prefs.setInt('sessionLengthMinutes', s.sessionLengthMinutes);
+    await prefs.setString('callsign', s.callsign);
   }
+}
+
+/// Normalizes free-form callsign input: uppercase, trimmed, only chars the
+/// Morse engine can send. Returns '' if nothing valid remains.
+String normalizeCallsign(String raw) {
+  final up = raw.trim().toUpperCase();
+  final buf = StringBuffer();
+  for (final ch in up.split('')) {
+    if (kMorseCode.containsKey(ch)) buf.write(ch);
+  }
+  return buf.toString();
 }
 
 class CwTrainerPage extends StatefulWidget {
@@ -553,9 +569,15 @@ class _CwTrainerPageState extends State<CwTrainerPage>
       ),
     );
     if (s != null && mounted) {
+      final callsignChanged = s.callsign != _settings.callsign;
       final prefs = await SharedPreferences.getInstance();
       await CwTrainerSettings.save(prefs, s);
-      setState(() => _settings = s);
+      setState(() {
+        _settings = s;
+        // A changed callsign changes the Copy curriculum, so rebuild the page
+        // to pick it up. Progress is preserved (no suppressNextDisposeFlush).
+        if (callsignChanged) _adaptiveEpoch++;
+      });
     }
   }
 
@@ -700,6 +722,7 @@ class _CwTrainerPageState extends State<CwTrainerPage>
         frequencyHz: _settings.frequencyHz,
         bufferDelayMs: _settings.displayDelayMs,
         sessionLengthMinutes: _settings.sessionLengthMinutes,
+        callsign: _settings.callsign,
       ),
     );
   }
@@ -865,6 +888,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _displayDelayMs;
   late int _sessionLengthMinutes;
   late TextEditingController _sessionLengthController;
+  late TextEditingController _callsignController;
 
   @override
   void initState() {
@@ -876,11 +900,13 @@ class _SettingsPageState extends State<SettingsPage> {
     _displayDelayMs = widget.settings.displayDelayMs;
     _sessionLengthMinutes = widget.settings.sessionLengthMinutes;
     _sessionLengthController = TextEditingController(text: '$_sessionLengthMinutes');
+    _callsignController = TextEditingController(text: widget.settings.callsign);
   }
 
   @override
   void dispose() {
     _sessionLengthController.dispose();
+    _callsignController.dispose();
     super.dispose();
   }
 
@@ -895,7 +921,8 @@ class _SettingsPageState extends State<SettingsPage> {
       ..wordsOnlyLearnedLetters = widget.settings.wordsOnlyLearnedLetters
       ..wordListType = widget.settings.wordListType
       ..displayDelayMs = _displayDelayMs
-      ..sessionLengthMinutes = _sessionLengthMinutes);
+      ..sessionLengthMinutes = _sessionLengthMinutes
+      ..callsign = normalizeCallsign(_callsignController.text));
   }
 
   @override
@@ -916,6 +943,20 @@ class _SettingsPageState extends State<SettingsPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text('Your Callsign', style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _callsignController,
+              textCapitalization: TextCapitalization.characters,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'e.g. W1ABC',
+                helperText: 'Trained early in Copy mode and used in generated exchanges.',
+              ),
+            ),
+            const SizedBox(height: 16),
             Text('Actual Speed ($_actualWpm WPM)', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _actualWpm.toDouble(), min: 5, max: 40, divisions: 35, label: '$_actualWpm', onChanged: (v) => setState(() => _actualWpm = v.round())),
             Text('Effective Speed ($_effectiveWpm WPM)', style: Theme.of(context).textTheme.labelLarge),
@@ -1079,8 +1120,42 @@ class _SettingsPageState extends State<SettingsPage> {
 
 /// Lightweight first-launch / help intro: a short summary of the Copy approach
 /// and the science behind it, with a link to the full reference guide.
-class WelcomePage extends StatelessWidget {
+class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
+
+  @override
+  State<WelcomePage> createState() => _WelcomePageState();
+}
+
+class _WelcomePageState extends State<WelcomePage> {
+  final TextEditingController _callsignController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Prefill if a callsign was already saved.
+    SharedPreferences.getInstance().then((prefs) {
+      final existing = prefs.getString('callsign') ?? '';
+      if (existing.isNotEmpty && mounted) {
+        _callsignController.text = existing;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _callsignController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _finish() async {
+    final call = normalizeCallsign(_callsignController.text);
+    if (call.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('callsign', call);
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1142,6 +1217,29 @@ class WelcomePage extends StatelessWidget {
                     style: theme.textTheme.bodyMedium
                         ?.copyWith(color: theme.hintColor),
                   ),
+                  const SizedBox(height: 24),
+                  Text('Your callsign (optional)',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Your own callsign is the first thing you copy on the air, so Copy '
+                    'trains it early and mixes it into realistic exchanges. You can add or '
+                    'change it later in Settings.',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.hintColor),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _callsignController,
+                    textCapitalization: TextCapitalization.characters,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: 'e.g. W1ABC',
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Center(
                     child: TextButton.icon(
@@ -1161,7 +1259,7 @@ class WelcomePage extends StatelessWidget {
             child: SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: _finish,
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),

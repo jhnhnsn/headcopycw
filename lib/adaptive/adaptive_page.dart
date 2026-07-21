@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 
 import '../morse_engine.dart';
 import 'curriculum.dart';
+import 'curriculum_provider.dart';
+import 'generator.dart';
 import 'progress_page.dart';
 import 'progress_stats.dart';
 import 'progress_store.dart';
@@ -27,6 +29,9 @@ class AdaptiveSettings {
   /// Session length in minutes (0 = unlimited).
   final int sessionLengthMinutes;
 
+  /// The learner's own callsign (uppercase, encodable), or '' if unset.
+  final String callsign;
+
   const AdaptiveSettings({
     required this.actualWpm,
     required this.effectiveWpm,
@@ -34,6 +39,7 @@ class AdaptiveSettings {
     required this.frequencyHz,
     required this.bufferDelayMs,
     required this.sessionLengthMinutes,
+    this.callsign = '',
   });
 }
 
@@ -79,6 +85,13 @@ class AdaptivePageState extends State<AdaptivePage> {
   ProgressStore? _store;
   AdaptiveProgress _progress = AdaptiveProgress();
 
+  /// Curriculum composed with the learner's callsign (if any), plus its lookup.
+  late final List<CurriculumItem> _curriculum;
+  late final Map<String, CurriculumItem> _curriculumById;
+
+  /// Endless-practice generator, used once the fixed curriculum is exhausted.
+  late final CopyGenerator _generator;
+
   _Phase _phase = _Phase.idle;
   bool _running = false;
 
@@ -116,6 +129,9 @@ class AdaptivePageState extends State<AdaptivePage> {
   }
 
   Future<void> _init() async {
+    _curriculum = buildCurriculum(widget.settings.callsign);
+    _curriculumById = curriculumById(_curriculum);
+    _generator = CopyGenerator(seed: 1, myCallsign: widget.settings.callsign);
     if (widget.storageDir != null) {
       _store = ProgressStore(
           File('${widget.storageDir!.path}${Platform.pathSeparator}adaptive_progress.json'));
@@ -155,18 +171,24 @@ class AdaptivePageState extends State<AdaptivePage> {
 
   /// The next curriculum item not yet introduced, with its prereq ids.
   ({String id, List<String> prereqs})? _nextLocked() {
-    for (final it in kCurriculum) {
+    for (final it in _curriculum) {
       final st = _scheduler.states[it.id];
       if (st == null || !st.introduced) {
         return (id: it.id, prereqs: it.prereqs);
       }
     }
-    return null; // curriculum exhausted
+    return null; // fixed curriculum exhausted → generator takes over
   }
+
+  /// True once every fixed-curriculum item has been introduced.
+  bool get _curriculumExhausted => _nextLocked() == null;
 
   Future<void> _persist({bool immediate = false}) async {
     if (_store == null) return;
     _progress.totalReps = _scheduler.repCounter;
+    // Generated items are ephemeral drill — never persist their SRS state, so
+    // the states map can't grow unbounded and progress counts stay clean.
+    _progress.itemStates.removeWhere((id, _) => isGeneratedId(id));
     if (immediate) {
       await _store!.flush(_progress);
     } else {
@@ -187,6 +209,7 @@ class AdaptivePageState extends State<AdaptivePage> {
       _sessionCorrect = 0;
       _sessionLatencies.clear();
       _sessionUnlockedIds.clear();
+      _generatedThisSession.clear();
       _sessionStart = widget.now();
       _remainingSeconds = widget.settings.sessionLengthMinutes * 60;
       _current = null;
@@ -279,27 +302,46 @@ class AdaptivePageState extends State<AdaptivePage> {
 
   // ---- Presentation loop ----
 
+  /// Generated items presented this session, kept so a re-picked generated id
+  /// (for spaced-repetition review) can be resolved back to its item.
+  final Map<String, CurriculumItem> _generatedThisSession = {};
+
   Future<void> _presentNext() async {
     if (!_running) return;
-    final introduced = _introducedIds;
-    final before = introduced.length;
-    final pick = _scheduler.pickNext(
-      introducedIds: introduced,
-      nextLockedItem: _nextLocked(),
-    );
-    if (pick == null) {
-      // Nothing to present (shouldn't happen once curriculum is non-empty).
-      setState(() => _phase = _Phase.idle);
-      return;
+
+    CurriculumItem? item;
+
+    // Once the fixed curriculum is exhausted, mostly serve fresh generated
+    // material, still interleaving spaced-repetition review of learned items.
+    if (_curriculumExhausted && _shouldGenerate()) {
+      item = _generator.next();
+      _generatedThisSession[item.id] = item;
+    } else {
+      final introduced = _introducedIds;
+      final before = introduced.length;
+      final pick = _scheduler.pickNext(
+        introducedIds: introduced,
+        nextLockedItem: _nextLocked(),
+      );
+      if (pick == null) {
+        // No curriculum item to serve → fall through to a generated one so we
+        // never stall.
+        item = _generator.next();
+        _generatedThisSession[item.id] = item;
+      } else {
+        item = _curriculumById[pick] ?? _generatedThisSession[pick];
+        if (item == null) {
+          // A stale/unknown id (e.g. a generated id no longer cached) — skip.
+          _presentNext();
+          return;
+        }
+        // Track a genuinely new *curriculum* unlock (not generated review).
+        final wasIntroduced = _scheduler.states[pick]?.introduced ?? false;
+        if (!wasIntroduced && before > 0 && !isGeneratedId(pick)) {
+          _sessionUnlockedIds.add(pick);
+        }
+      }
     }
-    final item = kCurriculumById[pick];
-    if (item == null) {
-      _presentNext();
-      return;
-    }
-    // Detect a freshly-introduced item for the unlock tally.
-    final wasIntroduced = _scheduler.states[pick]?.introduced ?? false;
-    if (!wasIntroduced && before > 0) _sessionUnlockedIds.add(pick);
 
     setState(() {
       _current = item;
@@ -311,6 +353,14 @@ class AdaptivePageState extends State<AdaptivePage> {
     });
 
     await _playCurrent();
+  }
+
+  /// After the curriculum is done, decide whether to serve a fresh generated
+  /// item vs. a spaced-repetition review of a learned item. Bias toward new
+  /// generated material but keep reviewing so mastered items stay sharp.
+  bool _shouldGenerate() {
+    // ~70% generated, ~30% review. Vary by rep counter so it isn't periodic.
+    return (_scheduler.repCounter * 7) % 10 < 7;
   }
 
   Future<void> _playCurrent() async {
@@ -477,7 +527,7 @@ class AdaptivePageState extends State<AdaptivePage> {
   }
 
   Widget _buildProgressPanel(ThemeData theme) {
-    final summary = summarize(_scheduler);
+    final summary = summarize(_scheduler, curriculum: _curriculum);
     final lockedColor = theme.disabledColor.withValues(alpha: 0.15);
     final last = _progress.sessions.isEmpty ? null : _progress.sessions.last;
 
@@ -554,7 +604,7 @@ class AdaptivePageState extends State<AdaptivePage> {
                     runSpacing: 6,
                     children: [
                       for (final id in last.unlockedIds)
-                        _unlockedChip(theme, kCurriculumById[id]?.text ?? id),
+                        _unlockedChip(theme, _curriculumById[id]?.text ?? id),
                     ],
                   ),
                 ],
@@ -604,6 +654,7 @@ class AdaptivePageState extends State<AdaptivePage> {
         builder: (_) => ProgressPage(
           scheduler: _scheduler,
           sessions: _progress.sessions,
+          curriculum: _curriculum,
         ),
       ),
     );

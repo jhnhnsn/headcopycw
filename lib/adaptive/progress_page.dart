@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'curriculum.dart';
 import 'progress_stats.dart';
 import 'progress_store.dart';
 import 'srs.dart';
@@ -11,17 +12,22 @@ class ProgressPage extends StatelessWidget {
   final SrsScheduler scheduler;
   final List<SessionSummary> sessions;
 
+  /// The (possibly callsign-composed) curriculum to display; defaults to the
+  /// fixed [kCurriculum] when null.
+  final List<CurriculumItem>? curriculum;
+
   const ProgressPage({
     super.key,
     required this.scheduler,
     required this.sessions,
+    this.curriculum,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final summary = summarize(scheduler);
-    final items = itemProgressList(scheduler);
+    final summary = summarize(scheduler, curriculum: curriculum);
+    final items = itemProgressList(scheduler, curriculum: curriculum);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Your Progress')),

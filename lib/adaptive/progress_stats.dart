@@ -65,10 +65,13 @@ class ProgressSummary {
 }
 
 /// Per-item progress across the whole curriculum, in curriculum order.
-List<ItemProgress> itemProgressList(SrsScheduler scheduler) {
+/// [curriculum] defaults to the fixed [kCurriculum]; pass a composed curriculum
+/// (e.g. including the user's callsign) to reflect it in the item map.
+List<ItemProgress> itemProgressList(SrsScheduler scheduler,
+    {List<CurriculumItem>? curriculum}) {
   final cfg = scheduler.config;
   return [
-    for (final item in kCurriculum)
+    for (final item in (curriculum ?? kCurriculum))
       _progressFor(item, scheduler.states[item.id], cfg),
   ];
 }
@@ -95,11 +98,14 @@ ItemProgress _progressFor(CurriculumItem item, ItemState? st, SrsConfig cfg) {
   );
 }
 
-/// Roll-up counts for the summary card.
-ProgressSummary summarize(SrsScheduler scheduler) {
+/// Roll-up counts for the summary card. [curriculum] defaults to the fixed
+/// [kCurriculum]; pass a composed curriculum to include e.g. the callsign item.
+ProgressSummary summarize(SrsScheduler scheduler,
+    {List<CurriculumItem>? curriculum}) {
+  final items = curriculum ?? kCurriculum;
   var unlocked = 0, mastered = 0, learning = 0;
   final cfg = scheduler.config;
-  for (final item in kCurriculum) {
+  for (final item in items) {
     final st = scheduler.states[item.id];
     if (st == null || !st.introduced) continue;
     unlocked++;
@@ -110,7 +116,7 @@ ProgressSummary summarize(SrsScheduler scheduler) {
     }
   }
   return ProgressSummary(
-    total: kCurriculum.length,
+    total: items.length,
     unlocked: unlocked,
     mastered: mastered,
     learning: learning,

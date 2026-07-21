@@ -141,15 +141,48 @@ List<CurriculumItem> _buildCurriculum() {
     withChars(p, 2, () => _phrase(p, 2));
   }
 
+  // ---- Tier 2.5: numbers in context (RST, serial, age, power) ----
+  // Real contacts are full of numbers attached to meaning. Practising them in
+  // context (not bare digits) is what you actually copy on the air.
+  const numberChunks = [
+    '5NN 14', '5NN 05', '5NN 22', 'RST 599', '599 OH', '599 CA',
+    'AGE 44', 'AGE 33', 'PWR 5W', 'PWR 100W', 'NR 17', 'NR 03',
+  ];
+  for (final p in numberChunks) {
+    withChars(p, 2, () => _phrase(p, 2));
+  }
+
   // ---- Tier 3: common English high-frequency words ----
   // Fills out any remaining alphabet and builds general copy fluency.
   const tier3Words = [
     'THE', 'AND', 'YOU', 'FOR', 'ARE', 'WITH', 'THAT', 'HAVE', 'THIS', 'FROM',
     'THEY', 'WILL', 'WHAT', 'WHEN', 'YOUR', 'CAN', 'ALL', 'NOT', 'BUT', 'HAD',
     'WORD', 'GOOD', 'MAKE', 'TIME', 'VERY', 'JUST', 'KNOW', 'TAKE', 'YEAR', 'ZONE',
+    'WAS', 'HIS', 'HER', 'SHE', 'HOW', 'WHY', 'WHO', 'OUT', 'NOW', 'NEW',
+    'ONE', 'TWO', 'DAY', 'WAY', 'MAN', 'GET', 'SEE', 'USE', 'HIM', 'OLD',
+    'THEIR', 'THERE', 'WHICH', 'WOULD', 'COULD', 'SHOULD', 'ABOUT', 'AFTER',
+    'FIRST', 'OTHER', 'THINK', 'THING', 'WORLD', 'YEARS', 'GREAT', 'THESE',
+    'BEEN', 'MORE', 'SOME', 'ONLY', 'OVER', 'ALSO', 'BACK', 'THAN', 'THEM',
+    'WELL', 'WORK', 'LIKE', 'LONG', 'MANY', 'MUCH', 'MUST', 'NAME', 'HOME',
+    'HERE', 'HAND', 'HIGH', 'KEEP', 'LAST', 'LIFE', 'PART', 'CALL', 'FIND',
+    'GIVE', 'LOOK', 'MADE', 'MEAN', 'MOVE', 'NEED', 'OPEN', 'PLAY', 'SHOW',
+    'TELL', 'TURN', 'WANT', 'WEEK', 'WENT', 'WORD', 'FEEL', 'FROM', 'GOES',
   ];
   for (final w in tier3Words) {
     withChars(w, 3, () => _word(w, 3));
+  }
+
+  // ---- Tier 4: callsign copy ----
+  // Copying unfamiliar callsigns is the hardest, highest-value on-air skill.
+  // A curated set of realistic calls (varied prefixes) plus portable (/P) forms
+  // to introduce the '/' separator. By now all component chars are learned.
+  const callsigns = [
+    'W1ABC', 'K2LON', 'N3RAY', 'W4TOM', 'K5JIM', 'N6SAM', 'W7BOB', 'K8MAX',
+    'N9LEE', 'W0PAT', 'VE3RM', 'DL4DX', 'G3XYZ', 'JA1QRS', 'VK2ANT',
+    'W1ABC/P', 'K5JIM/P',
+  ];
+  for (final c in callsigns) {
+    withChars(c, 4, () => _word(c, 4));
   }
 
   return items;

@@ -23,6 +23,8 @@ Bugs, ideas, fixes are all welcome. Share and enjoy!
 - **Spaced repetition.** Items you miss come back sooner; items you nail come back later. Weak spots get the practice; mastered material doesn't waste your time.
 - **Speed gate, not just accuracy.** Copy watches *how fast* you recognize each item, not only whether you get it right. A correct-but-slow answer means you're still consciously decoding, so a new item won't unlock until you're recognizing the current material **instantly** (about half a second). This is the key to breaking through the plateau that catches people who only chase accuracy.
 - **Let misses go.** If you don't catch something, don't stop to puzzle it out — take your best guess and move on. Getting the gist and continuing is exactly the skill real head copy needs.
+- **Your own callsign.** Set your callsign on the welcome screen (or later in **Settings → Your Callsign**). It's the first thing you copy on the air, so Copy teaches it early and mixes it into realistic exchanges.
+- **It never runs out.** Once you've worked through the built-in material — the alphabet, prosigns, exchanges, numbers-in-context, callsigns, and common words — Copy keeps going, generating an endless stream of fresh random callsigns and short QSO exchanges (`W1ABC DE {your call} 5NN K`) so you stay sharp on real on-air copy.
 
 You can reset all Copy progress anytime from **Settings → Reset Copy progress**.
 
