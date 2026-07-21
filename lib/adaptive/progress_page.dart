@@ -1,132 +1,74 @@
 import 'package:flutter/material.dart';
 
-import 'curriculum.dart';
 import 'progress_stats.dart';
 import 'progress_store.dart';
-import 'srs.dart';
 
-/// Full progress view: a session trend chart (accuracy + recognition speed)
-/// and a curriculum item map colour-coded mastered / learning / locked.
+/// Shared progress widgets used by the Copy home screen: status colours, the
+/// daily-activity heatmap, the session trend chart, and the item map.
 /// Charts are hand-drawn with CustomPainter to avoid extra dependencies.
-class ProgressPage extends StatelessWidget {
-  final SrsScheduler scheduler;
-  final List<SessionSummary> sessions;
-
-  /// The (possibly callsign-composed) curriculum to display; defaults to the
-  /// fixed [kCurriculum] when null.
-  final List<CurriculumItem>? curriculum;
-
-  const ProgressPage({
-    super.key,
-    required this.scheduler,
-    required this.sessions,
-    this.curriculum,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final summary = summarize(scheduler, curriculum: curriculum);
-    final items = itemProgressList(scheduler, curriculum: curriculum);
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Your Progress')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _summaryHeader(theme, summary),
-          const SizedBox(height: 24),
-          Text('Recent sessions', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 8),
-          if (sessions.isEmpty)
-            _emptyNote(theme, 'Finish a timed session to see your trend here.')
-          else
-            SessionTrendChart(sessions: sessions),
-          const SizedBox(height: 24),
-          Text('What you\'ve unlocked', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 14,
-            runSpacing: 4,
-            children: [
-              _legendDot(theme, kMasteredColor, 'mastered'),
-              _legendDot(theme, kLearningColor, 'learning'),
-              _legendDot(theme, theme.disabledColor.withValues(alpha: 0.3), 'locked'),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _ItemMap(items: items),
-        ],
-      ),
-    );
-  }
-
-  Widget _summaryHeader(ThemeData theme, ProgressSummary s) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('${s.unlocked} of ${s.total} items unlocked',
-            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: SizedBox(
-            height: 10,
-            child: Row(
-              children: [
-                Expanded(
-                  flex: (s.masteredFraction * 1000).round().clamp(0, 1000),
-                  child: Container(color: kMasteredColor),
-                ),
-                Expanded(
-                  flex: ((s.unlockedFraction - s.masteredFraction) * 1000)
-                      .round()
-                      .clamp(0, 1000),
-                  child: Container(color: kLearningColor),
-                ),
-                Expanded(
-                  flex: ((1 - s.unlockedFraction) * 1000).round().clamp(0, 1000),
-                  child: Container(color: theme.disabledColor.withValues(alpha: 0.15)),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text('${s.mastered} mastered · ${s.learning} learning · ${s.locked} locked',
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.hintColor)),
-      ],
-    );
-  }
-
-  Widget _emptyNote(ThemeData theme, String text) => Container(
-        padding: const EdgeInsets.all(20),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(text,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.hintColor)),
-      );
-
-  Widget _legendDot(ThemeData theme, Color color, String label) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-          const SizedBox(width: 4),
-          Text(label, style: theme.textTheme.bodySmall),
-        ],
-      );
-}
 
 /// Shared status colours used by the progress page and the home panel.
 const Color kMasteredColor = Color(0xFF2E7D32); // green 800
 const Color kLearningColor = Color(0xFFF9A825); // amber 800
+
+/// A GitHub-style activity strip: one cell per day, shaded by how much practice
+/// happened that day. Oldest → newest, left → right.
+class ActivityHeatmap extends StatelessWidget {
+  final List<DayActivity> days;
+  const ActivityHeatmap({super.key, required this.days});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final base = theme.colorScheme.primary;
+    final empty = theme.disabledColor.withValues(alpha: 0.12);
+    // Scale intensity by items seen that day, relative to the busiest day.
+    final maxItems =
+        days.fold<int>(0, (m, d) => d.itemsSeen > m ? d.itemsSeen : m);
+
+    Color cellColor(DayActivity d) {
+      if (!d.active) return empty;
+      final frac = maxItems == 0 ? 1.0 : (d.itemsSeen / maxItems);
+      // Map 0..1 to a visible alpha band (0.35..1.0) so even a light day shows.
+      return base.withValues(alpha: 0.35 + 0.65 * frac.clamp(0.0, 1.0));
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 4.0;
+        final n = days.length;
+        final cell =
+            ((constraints.maxWidth - gap * (n - 1)) / n).clamp(6.0, 22.0);
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            for (var i = 0; i < n; i++) ...[
+              Tooltip(
+                message: _label(days[i]),
+                child: Container(
+                  width: cell,
+                  height: cell,
+                  decoration: BoxDecoration(
+                    color: cellColor(days[i]),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+              if (i < n - 1) const SizedBox(width: gap),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  String _label(DayActivity d) {
+    final date = '${d.day.month}/${d.day.day}';
+    if (!d.active) return '$date · no practice';
+    return '$date · ${d.sessions} session${d.sessions == 1 ? '' : 's'} · '
+        '${d.itemsSeen} items · ${(d.accuracy * 100).round()}%';
+  }
+}
 
 /// Line chart of accuracy (%) and median recognition speed (ms) across the most
 /// recent sessions. Two y-axes conceptually, normalised to the same plot box.
@@ -262,9 +204,9 @@ class _TrendPainter extends CustomPainter {
 
 /// Grid of every curriculum item, colour-coded by status. Tapping shows the
 /// item's accuracy and recognition speed.
-class _ItemMap extends StatelessWidget {
+class ItemMap extends StatelessWidget {
   final List<ItemProgress> items;
-  const _ItemMap({required this.items});
+  const ItemMap({super.key, required this.items});
 
   @override
   Widget build(BuildContext context) {

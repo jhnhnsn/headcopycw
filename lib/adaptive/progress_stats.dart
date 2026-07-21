@@ -4,7 +4,64 @@
 library;
 
 import 'curriculum.dart';
+import 'progress_store.dart';
 import 'srs.dart';
+
+/// One calendar day's practice activity, for the activity heatmap.
+class DayActivity {
+  /// Local date at midnight (year/month/day only).
+  final DateTime day;
+  final int sessions;
+  final int itemsSeen;
+  final int correct;
+
+  const DayActivity({
+    required this.day,
+    required this.sessions,
+    required this.itemsSeen,
+    required this.correct,
+  });
+
+  double get accuracy => itemsSeen == 0 ? 0 : correct / itemsSeen;
+  bool get active => sessions > 0;
+}
+
+DateTime _midnight(DateTime d) => DateTime(d.year, d.month, d.day);
+
+/// Builds a contiguous run of the last [days] calendar days ending on [today],
+/// oldest → newest, each filled with that day's aggregated session activity
+/// (empty days included so the heatmap shows gaps/streaks). Sessions are keyed
+/// by their [SessionSummary.endedAtMs] wall-clock timestamp.
+List<DayActivity> dailyActivity(
+  List<SessionSummary> sessions, {
+  required DateTime today,
+  int days = 14,
+}) {
+  // Aggregate sessions into per-day buckets.
+  final buckets = <DateTime, List<SessionSummary>>{};
+  for (final s in sessions) {
+    final d = _midnight(DateTime.fromMillisecondsSinceEpoch(s.endedAtMs));
+    (buckets[d] ??= []).add(s);
+  }
+  final end = _midnight(today);
+  final out = <DayActivity>[];
+  for (var i = days - 1; i >= 0; i--) {
+    final day = end.subtract(Duration(days: i));
+    final b = buckets[day] ?? const [];
+    var items = 0, correct = 0;
+    for (final s in b) {
+      items += s.itemsSeen;
+      correct += s.correct;
+    }
+    out.add(DayActivity(
+      day: day,
+      sessions: b.length,
+      itemsSeen: items,
+      correct: correct,
+    ));
+  }
+  return out;
+}
 
 /// How far along the learner is with a single curriculum item.
 enum ItemStatus {
@@ -62,6 +119,60 @@ class ProgressSummary {
 
   /// Fraction mastered (0..1).
   double get masteredFraction => total == 0 ? 0 : mastered / total;
+}
+
+/// Human-readable name for a curriculum tier. Kept deliberately coarse — a
+/// milestone, never the specific next item — so it motivates without priming
+/// the learner on what sound is coming.
+String tierName(int tier) {
+  switch (tier) {
+    case 1:
+      return 'the contact basics';
+    case 2:
+      return 'exchanges & numbers';
+    case 3:
+      return 'common words';
+    case 4:
+      return 'callsigns';
+    default:
+      return 'more material';
+  }
+}
+
+/// A non-spoiling progress nudge: describes the tier the learner is working
+/// through and how close they are to finishing it — NEVER the next specific
+/// item or its immediate identity. Returns null when nothing meaningful applies
+/// (nothing started, or the whole curriculum is done).
+String? milestoneNudge(SrsScheduler scheduler, List<CurriculumItem> curriculum) {
+  // Find the first not-yet-introduced item; the tier it belongs to is the one
+  // currently being worked into.
+  CurriculumItem? nextLocked;
+  for (final it in curriculum) {
+    final st = scheduler.states[it.id];
+    if (st == null || !st.introduced) {
+      nextLocked = it;
+      break;
+    }
+  }
+  if (nextLocked == null) return null; // curriculum complete
+
+  final tier = nextLocked.tier;
+  final tierItems = curriculum.where((it) => it.tier == tier).toList();
+  if (tierItems.isEmpty) return null;
+  final introduced = tierItems
+      .where((it) => scheduler.states[it.id]?.introduced ?? false)
+      .length;
+
+  // Nothing in this tier started yet → don't nudge (would hint the next item).
+  if (introduced == 0) return null;
+
+  final remaining = tierItems.length - introduced;
+  final name = tierName(tier);
+  if (remaining <= 2) {
+    return 'Almost through $name';
+  }
+  final pct = (introduced / tierItems.length * 100).round();
+  return '$pct% through $name';
 }
 
 /// Per-item progress across the whole curriculum, in curriculum order.

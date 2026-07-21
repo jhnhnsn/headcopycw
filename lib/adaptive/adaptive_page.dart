@@ -128,13 +128,33 @@ class AdaptivePageState extends State<AdaptivePage> {
     _init();
   }
 
+  @override
+  void didUpdateWidget(AdaptivePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The parent resolves storageDir asynchronously, so it can arrive AFTER
+    // this page first mounts. If it appears (or changes) later, wire up the
+    // store now and reload — otherwise persistence silently no-ops and sessions
+    // are never saved. Only reload when not mid-session.
+    if (!_running &&
+        widget.storageDir?.path != oldWidget.storageDir?.path &&
+        widget.storageDir != null) {
+      _attachStoreAndReload();
+    }
+  }
+
   Future<void> _init() async {
     _curriculum = buildCurriculum(widget.settings.callsign);
     _curriculumById = curriculumById(_curriculum);
     _generator = CopyGenerator(seed: 1, myCallsign: widget.settings.callsign);
+    await _attachStoreAndReload();
+  }
+
+  /// (Re)attaches the progress store from the current [widget.storageDir] and
+  /// loads persisted progress into the scheduler. Safe to call more than once.
+  Future<void> _attachStoreAndReload() async {
     if (widget.storageDir != null) {
-      _store = ProgressStore(
-          File('${widget.storageDir!.path}${Platform.pathSeparator}adaptive_progress.json'));
+      _store = ProgressStore(File(
+          '${widget.storageDir!.path}${Platform.pathSeparator}adaptive_progress.json'));
       _progress = await _store!.load();
     }
     _scheduler = SrsScheduler(
@@ -184,6 +204,14 @@ class AdaptivePageState extends State<AdaptivePage> {
   bool get _curriculumExhausted => _nextLocked() == null;
 
   Future<void> _persist({bool immediate = false}) async {
+    // Belt-and-suspenders: if the store wasn't wired up at mount (storageDir
+    // resolves asynchronously), attach it now so a save is never silently
+    // dropped. Attach without reloading — we must keep the in-memory progress
+    // we're about to write, not overwrite it with a stale/empty file.
+    if (_store == null && widget.storageDir != null) {
+      _store = ProgressStore(File(
+          '${widget.storageDir!.path}${Platform.pathSeparator}adaptive_progress.json'));
+    }
     if (_store == null) return;
     _progress.totalReps = _scheduler.repCounter;
     // Generated items are ephemeral drill — never persist their SRS state, so
@@ -505,160 +533,207 @@ class AdaptivePageState extends State<AdaptivePage> {
   }
 
   Widget _buildIdleScreen(BoxDecoration container, ThemeData theme) {
+    final sessions = _progress.sessions;
+    final lastSession = sessions.isEmpty ? null : sessions.last;
+    final days = dailyActivity(sessions, today: widget.now(), days: 30);
+    final anyActivity = days.any((d) => d.active);
+    final items = itemProgressList(_scheduler, curriculum: _curriculum);
+    final unlockedCount =
+        items.where((p) => p.status != ItemStatus.locked).length;
+    final lockedColor = theme.disabledColor.withValues(alpha: 0.15);
+    final nudge = milestoneNudge(_scheduler, _curriculum);
+
     return Container(
       decoration: container,
-      padding: const EdgeInsets.all(20),
-      alignment: Alignment.topCenter,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: SingleChildScrollView(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Press Start. Listen, wait for the prompt, then type what you '
-              'heard — no paper, no peeking.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleMedium,
+            // ---- Hero: last session's speed & accuracy (the current readout;
+            //      the trend graph below shows the trajectory). ----
+            _buildStatTiles(theme, lastSession),
+
+            // ---- Trend ----
+            const SizedBox(height: 16),
+            if (sessions.length >= 2)
+              SessionTrendChart(sessions: sessions)
+            else
+              _hint(theme, sessions.isEmpty
+                  ? 'Finish a couple of timed sessions to see your trend.'
+                  : 'One more session and your trend appears here.'),
+
+            // ---- Quiet scope line (breadth, deliberately understated) ----
+            const SizedBox(height: 12),
+            Center(
+              child: Text(
+                nudge != null
+                    ? '$unlockedCount items in rotation · $nudge'
+                    : '$unlockedCount items in rotation',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
+              ),
             ),
-            const SizedBox(height: 20),
-            _buildProgressPanel(theme),
+
+            // ---- Daily activity ----
+            const Divider(height: 24),
+            _sectionLabel(theme, 'Daily activity', 'last 30 days'),
+            const SizedBox(height: 8),
+            if (anyActivity)
+              ActivityHeatmap(days: days)
+            else
+              _hint(theme, 'Practice on more days to build a streak.'),
+
+            // ---- Unlocked items (locked ones collapsed to a count so the
+            //      curriculum order is never revealed — no priming). ----
+            const Divider(height: 24),
+            Row(
+              children: [
+                Expanded(child: _sectionLabel(theme, 'Unlocked', null)),
+                _legendDot(theme, kMasteredColor, 'mastered'),
+                const SizedBox(width: 8),
+                _legendDot(theme, kLearningColor, 'learning'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _buildUnlockedItems(theme, items, lockedColor),
+            const SizedBox(height: 8),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildProgressPanel(ThemeData theme) {
-    final summary = summarize(_scheduler, curriculum: _curriculum);
-    final lockedColor = theme.disabledColor.withValues(alpha: 0.15);
-    final last = _progress.sessions.isEmpty ? null : _progress.sessions.last;
+  /// Two big stat tiles showing your LAST session's accuracy and recognition
+  /// speed — the immediate "how you just did" readout. The trend graph below
+  /// carries the trajectory over time.
+  Widget _buildStatTiles(ThemeData theme, SessionSummary? last) {
+    final hasData = last != null && last.itemsSeen > 0;
+    final acc = hasData ? '${(last.accuracy * 100).round()}%' : '—';
+    final speed = hasData && last.medianLatencyMs > 0
+        ? '${last.medianLatencyMs}ms'
+        : '—';
+    final fast = hasData && last.medianLatencyMs > 0 &&
+        last.medianLatencyMs <= kIcrLatencyMs;
+    return Column(
+      children: [
+        Text(hasData ? 'Last session' : 'Your last session',
+            style: theme.textTheme.labelSmall?.copyWith(color: theme.hintColor)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: _statTile(theme, 'ACCURACY', acc,
+                Icons.check_circle_outline, kMasteredColor)),
+            const SizedBox(width: 12),
+            Expanded(child: _statTile(theme, 'SPEED', speed, Icons.bolt,
+                fast ? kMasteredColor : theme.colorScheme.primary,
+                footnote: fast ? 'instant' : null)),
+          ],
+        ),
+      ],
+    );
+  }
 
-    return Card(
-      elevation: 0,
-      color: theme.colorScheme.surface,
-      shape: RoundedRectangleBorder(
+  Widget _statTile(ThemeData theme, String label, String value, IconData icon,
+      Color accent, {String? footnote}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: theme.dividerColor),
+        border: Border.all(color: accent.withValues(alpha: 0.25)),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: _openProgress,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Row(
-                children: [
-                  Text('Your progress', style: theme.textTheme.titleSmall),
-                  const Spacer(),
-                  Text('${(summary.unlockedFraction * 100).round()}%',
-                      style: theme.textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: SizedBox(
-                  height: 8,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: (summary.masteredFraction * 1000).round().clamp(0, 1000),
-                        child: Container(color: kMasteredColor),
-                      ),
-                      Expanded(
-                        flex: ((summary.unlockedFraction - summary.masteredFraction) * 1000)
-                            .round()
-                            .clamp(0, 1000),
-                        child: Container(color: kLearningColor),
-                      ),
-                      Expanded(
-                        flex: ((1 - summary.unlockedFraction) * 1000).round().clamp(0, 1000),
-                        child: Container(color: lockedColor),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${summary.unlocked} unlocked · ${summary.mastered} mastered',
-                style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
-              ),
-
-              // ---- Last session ----
-              if (last != null) ...[
-                const Divider(height: 24),
-                Text('Last session', style: theme.textTheme.labelLarge),
-                const SizedBox(height: 6),
-                Text(
-                  '${(last.accuracy * 100).round()}% accuracy · ${last.medianLatencyMs}ms recognition · ${last.itemsSeen} items',
-                  style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
-                ),
-                if (last.unlockedIds.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text('Unlocked', style: theme.textTheme.bodySmall),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final id in last.unlockedIds)
-                        _unlockedChip(theme, _curriculumById[id]?.text ?? id),
-                    ],
-                  ),
-                ],
-              ],
-
-              // ---- Inline trend ----
-              if (_progress.sessions.length >= 2) ...[
-                const Divider(height: 24),
-                Text('Trend', style: theme.textTheme.labelLarge),
-                const SizedBox(height: 8),
-                SessionTrendChart(sessions: _progress.sessions),
-              ],
-
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text('All details',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.primary)),
-                  Icon(Icons.chevron_right, size: 18, color: theme.colorScheme.primary),
-                ],
-              ),
+              Icon(icon, size: 15, color: accent),
+              const SizedBox(width: 5),
+              Text(label,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      color: accent, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
             ],
           ),
-        ),
+          const SizedBox(height: 6),
+          Text(value,
+              style: theme.textTheme.headlineMedium
+                  ?.copyWith(fontWeight: FontWeight.bold)),
+          if (footnote != null)
+            Text(footnote,
+                style: theme.textTheme.bodySmall?.copyWith(color: accent)),
+        ],
       ),
     );
   }
 
-  Widget _unlockedChip(ThemeData theme, String text) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: kMasteredColor.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(text,
-            style: theme.textTheme.bodySmall?.copyWith(
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w600,
-                color: kMasteredColor)),
+  /// Shows unlocked items individually (tappable), then collapses the still-
+  /// locked items into a single count so their curriculum order is never
+  /// revealed (which would prime the learner on what's coming next).
+  Widget _buildUnlockedItems(
+      ThemeData theme, List<ItemProgress> items, Color lockedColor) {
+    final unlocked =
+        items.where((p) => p.status != ItemStatus.locked).toList();
+    final lockedCount = items.length - unlocked.length;
+
+    if (unlocked.isEmpty) {
+      return _hint(theme, 'Press Start — your first items unlock right away. '
+          '$lockedCount more await.');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ItemMap(items: unlocked),
+        if (lockedCount > 0) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: lockedColor,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_outline, size: 14, color: theme.hintColor),
+                const SizedBox(width: 6),
+                Text('$lockedCount more to unlock',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.hintColor)),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _sectionLabel(ThemeData theme, String title, String? trailing) {
+    return Row(
+      children: [
+        Text(title, style: theme.textTheme.labelLarge),
+        if (trailing != null) ...[
+          const SizedBox(width: 8),
+          Text(trailing, style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor)),
+        ],
+      ],
+    );
+  }
+
+  Widget _hint(ThemeData theme, String text) => Text(text,
+      style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor));
+
+  Widget _legendDot(ThemeData theme, Color color, String label) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 9, height: 9,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          const SizedBox(width: 4),
+          Text(label, style: theme.textTheme.bodySmall),
+        ],
       );
 
-  void _openProgress() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProgressPage(
-          scheduler: _scheduler,
-          sessions: _progress.sessions,
-          curriculum: _curriculum,
-        ),
-      ),
-    );
-  }
 
   Widget _centered(BoxDecoration d, ThemeData theme,
       {required IconData icon, required String label}) {
