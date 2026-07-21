@@ -11,54 +11,165 @@ import 'progress_store.dart';
 const Color kMasteredColor = Color(0xFF2E7D32); // green 800
 const Color kLearningColor = Color(0xFFF9A825); // amber 800
 
-/// A GitHub-style activity strip: one cell per day, shaded by how much practice
-/// happened that day. Oldest → newest, left → right.
+/// A GitHub-style activity calendar: weekdays as rows (Sun→Sat, top→bottom),
+/// weeks as columns (oldest→newest, left→right). Each cell is shaded by how
+/// much practice happened that day. [days] is a contiguous oldest→newest run.
 class ActivityHeatmap extends StatelessWidget {
   final List<DayActivity> days;
   const ActivityHeatmap({super.key, required this.days});
+
+  static const _weekdayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S']; // Sun..Sat
+  static const _monthAbbr = [
+    '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  /// Weekday row index, Sunday = 0 .. Saturday = 6. (DateTime: Mon=1..Sun=7.)
+  static int _row(DateTime d) => d.weekday % 7;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final base = theme.colorScheme.primary;
     final empty = theme.disabledColor.withValues(alpha: 0.12);
-    // Scale intensity by items seen that day, relative to the busiest day.
     final maxItems =
         days.fold<int>(0, (m, d) => d.itemsSeen > m ? d.itemsSeen : m);
 
     Color cellColor(DayActivity d) {
       if (!d.active) return empty;
       final frac = maxItems == 0 ? 1.0 : (d.itemsSeen / maxItems);
-      // Map 0..1 to a visible alpha band (0.35..1.0) so even a light day shows.
       return base.withValues(alpha: 0.35 + 0.65 * frac.clamp(0.0, 1.0));
     }
 
+    if (days.isEmpty) return const SizedBox.shrink();
+
+    // Build week columns. Each day lands on its real weekday row (Sun=0). A new
+    // column begins whenever we reach Sunday (after the first day); leading and
+    // trailing gaps are left as nulls (blank slots).
+    final columns = <List<DayActivity?>>[];
+    var col = List<DayActivity?>.filled(7, null);
+    var started = false;
+    for (final d in days) {
+      final r = _row(d.day);
+      if (r == 0 && started) {
+        columns.add(col);
+        col = List<DayActivity?>.filled(7, null);
+      }
+      col[r] = d;
+      started = true;
+    }
+    if (started) columns.add(col);
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        const gap = 4.0;
-        final n = days.length;
+        const gap = 3.0;
+        const labelW = 16.0;
+        final nCols = columns.length;
+        // Size cells to fit width; cap so they don't get huge with few weeks.
+        final avail = constraints.maxWidth - labelW - gap;
         final cell =
-            ((constraints.maxWidth - gap * (n - 1)) / n).clamp(6.0, 22.0);
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+            ((avail - gap * (nCols - 1)) / nCols).clamp(8.0, 18.0);
+
+        // Month labels: show a month abbreviation above the first column whose
+        // top-most real day starts a new month.
+        int? monthForColumn(int c) {
+          final firstDay = columns[c].firstWhere((d) => d != null,
+              orElse: () => null);
+          if (firstDay == null) return null;
+          final m = firstDay.day.month;
+          if (c == 0) return m;
+          final prev = columns[c - 1].firstWhere((d) => d != null,
+              orElse: () => null);
+          if (prev == null || prev.day.month != m) return m;
+          return null;
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (var i = 0; i < n; i++) ...[
-              Tooltip(
-                message: _label(days[i]),
-                child: Container(
-                  width: cell,
-                  height: cell,
-                  decoration: BoxDecoration(
-                    color: cellColor(days[i]),
-                    borderRadius: BorderRadius.circular(3),
+            // Month labels row.
+            Padding(
+              padding: const EdgeInsets.only(left: labelW + gap, bottom: 3),
+              child: Row(
+                children: [
+                  for (var c = 0; c < nCols; c++) ...[
+                    SizedBox(
+                      width: cell,
+                      child: Text(
+                        monthForColumn(c) != null
+                            ? _monthAbbr[monthForColumn(c)!]
+                            : '',
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: theme.hintColor, fontSize: 9),
+                        overflow: TextOverflow.visible,
+                        softWrap: false,
+                      ),
+                    ),
+                    if (c < nCols - 1) const SizedBox(width: gap),
+                  ],
+                ],
+              ),
+            ),
+            // Weekday labels column + the grid.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Weekday labels (show M/W/F to reduce clutter).
+                SizedBox(
+                  width: labelW,
+                  child: Column(
+                    children: [
+                      for (var r = 0; r < 7; r++) ...[
+                        SizedBox(
+                          height: cell,
+                          child: Text(
+                            (r == 1 || r == 3 || r == 5) ? _weekdayLabels[r] : '',
+                            style: theme.textTheme.labelSmall
+                                ?.copyWith(color: theme.hintColor, fontSize: 9),
+                          ),
+                        ),
+                        if (r < 6) const SizedBox(height: gap),
+                      ],
+                    ],
                   ),
                 ),
-              ),
-              if (i < n - 1) const SizedBox(width: gap),
-            ],
+                const SizedBox(width: gap),
+                // Week columns.
+                for (var c = 0; c < nCols; c++) ...[
+                  Column(
+                    children: [
+                      for (var r = 0; r < 7; r++) ...[
+                        _cell(theme, columns[c][r], cell, cellColor),
+                        if (r < 6) const SizedBox(height: gap),
+                      ],
+                    ],
+                  ),
+                  if (c < nCols - 1) const SizedBox(width: gap),
+                ],
+              ],
+            ),
           ],
         );
       },
+    );
+  }
+
+  Widget _cell(ThemeData theme, DayActivity? d, double size,
+      Color Function(DayActivity) colorFor) {
+    if (d == null) {
+      // Blank slot (padding before first day / after last).
+      return SizedBox(width: size, height: size);
+    }
+    return Tooltip(
+      message: _label(d),
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: colorFor(d),
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ),
     );
   }
 
@@ -169,14 +280,29 @@ class _TrendPainter extends CustomPainter {
       return plot.bottom - plot.height * norm;
     }
 
-    _drawLine(canvas, plot, sessions.length, xFor,
-        (i) => yAcc(sessions[i].accuracy), accuracyColor);
-    _drawLine(canvas, plot, sessions.length, xFor,
-        (i) => ySpeed(sessions[i].medianLatencyMs), speedColor);
+    // Label every point when there are few; thin out when crowded so the
+    // numbers stay readable. Always label the most recent point.
+    final n = sessions.length;
+    final step = n <= 6 ? 1 : (n <= 12 ? 2 : 3);
+    bool labelAt(int i) => i == n - 1 || i % step == 0;
+
+    _drawLine(canvas, plot, n, xFor,
+        (i) => yAcc(sessions[i].accuracy), accuracyColor,
+        labelAt: labelAt,
+        labelFor: (i) => '${(sessions[i].accuracy * 100).round()}%',
+        labelAbove: true);
+    _drawLine(canvas, plot, n, xFor,
+        (i) => ySpeed(sessions[i].medianLatencyMs), speedColor,
+        labelAt: labelAt,
+        labelFor: (i) => '${sessions[i].medianLatencyMs}',
+        labelAbove: false);
   }
 
   void _drawLine(Canvas canvas, Rect plot, int n, double Function(int) xFor,
-      double Function(int) yFor, Color color) {
+      double Function(int) yFor, Color color,
+      {bool Function(int)? labelAt,
+      String Function(int)? labelFor,
+      bool labelAbove = true}) {
     final line = Paint()
       ..color = color
       ..strokeWidth = 2.5
@@ -195,6 +321,35 @@ class _TrendPainter extends CustomPainter {
       canvas.drawCircle(p, 3, dot);
     }
     canvas.drawPath(path, line);
+
+    // Value labels near each (selected) point.
+    if (labelFor != null && labelAt != null) {
+      for (var i = 0; i < n; i++) {
+        if (!labelAt(i)) continue;
+        _drawLabel(canvas, plot, Offset(xFor(i), yFor(i)), labelFor(i), color,
+            above: labelAbove, isLast: i == n - 1);
+      }
+    }
+  }
+
+  void _drawLabel(Canvas canvas, Rect plot, Offset at, String text, Color color,
+      {required bool above, required bool isLast}) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: isLast ? FontWeight.w700 : FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    var dx = at.dx - tp.width / 2;
+    // Keep labels inside the plot horizontally.
+    dx = dx.clamp(plot.left, plot.right - tp.width);
+    final dy = above ? at.dy - tp.height - 5 : at.dy + 5;
+    tp.paint(canvas, Offset(dx, dy));
   }
 
   @override

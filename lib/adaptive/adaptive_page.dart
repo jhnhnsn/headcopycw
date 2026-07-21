@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../morse_engine.dart';
 import 'curriculum.dart';
 import 'curriculum_provider.dart';
+import 'cw_keyboard.dart';
 import 'generator.dart';
 import 'progress_page.dart';
 import 'progress_stats.dart';
@@ -102,6 +103,12 @@ class AdaptivePageState extends State<AdaptivePage> {
   Timer? _countdownTimer;
   int _remainingSeconds = 0;
 
+  /// "Too long to answer" bar: ticks while awaiting input, drains toward a
+  /// target that scales with item length. Visual only — never auto-submits.
+  Timer? _elapsedTimer;
+  final Stopwatch _elapsedWatch = Stopwatch();
+  int _elapsedTargetMs = 3000;
+
   /// Stopwatch started when the input field appears. Recognition latency is
   /// captured at the FIRST keystroke — that is the instant the learner
   /// recognised the sound. Time spent typing the rest of the answer and
@@ -170,6 +177,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     _bufferTimer?.cancel();
     _sessionTimer?.cancel();
     _countdownTimer?.cancel();
+    _elapsedTimer?.cancel();
     _answerController.dispose();
     _answerFocus.dispose();
     _player.dispose();
@@ -265,6 +273,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     _bufferTimer?.cancel();
     _sessionTimer?.cancel();
     _countdownTimer?.cancel();
+    _stopElapsedBar();
     await _player.stop();
     _latencyWatch.stop();
     _latencyWatch.reset();
@@ -421,8 +430,34 @@ class AdaptivePageState extends State<AdaptivePage> {
       _latencyWatch
         ..reset()
         ..start();
-      _answerFocus.requestFocus();
+      _startElapsedBar();
     });
+  }
+
+  /// Starts the "too long" bar for the current item. Target scales with item
+  /// length: roughly the ICR target per character plus fixed slack.
+  void _startElapsedBar() {
+    final chars = (_current?.text ?? '').replaceAll(' ', '').length.clamp(1, 30);
+    // ~ICR per char + 800ms slack (reaction + reaching for keys), min 1.5s.
+    _elapsedTargetMs = (chars * kIcrLatencyMs + 800).clamp(1500, 12000);
+    _elapsedWatch
+      ..reset()
+      ..start();
+    _elapsedTimer?.cancel();
+    // Tick ~30fps for a smooth bar; stop once we're a bit past target.
+    _elapsedTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+      if (!mounted || _phase != _Phase.awaitingInput) return;
+      if (_elapsedWatch.elapsedMilliseconds > _elapsedTargetMs + 1500) {
+        _elapsedTimer?.cancel();
+      }
+      setState(() {}); // repaint the bar
+    });
+  }
+
+  void _stopElapsedBar() {
+    _elapsedTimer?.cancel();
+    _elapsedTimer = null;
+    _elapsedWatch.stop();
   }
 
   void _replay() {
@@ -453,9 +488,27 @@ class AdaptivePageState extends State<AdaptivePage> {
     }
   }
 
+  // ---- CW keyboard handlers (system keyboard is suppressed) ----
+
+  void _onCwKey(String ch) {
+    if (_phase != _Phase.awaitingInput) return;
+    _answerController.text = _answerController.text + ch;
+    _onAnswerChanged(_answerController.text);
+    setState(() {}); // reflect the new character
+  }
+
+  void _onCwBackspace() {
+    if (_phase != _Phase.awaitingInput) return;
+    final t = _answerController.text;
+    if (t.isEmpty) return;
+    _answerController.text = t.substring(0, t.length - 1);
+    setState(() {});
+  }
+
   void _submit() {
     if (_phase != _Phase.awaitingInput) return;
     _latencyWatch.stop();
+    _stopElapsedBar();
     // Recognition = time to first keystroke. If they submitted an empty answer
     // (or hit Enter with no typing), fall back to the full elapsed time.
     final latency = _recognitionLatencyMs ?? _latencyWatch.elapsedMilliseconds;
@@ -534,8 +587,7 @@ class AdaptivePageState extends State<AdaptivePage> {
 
   Widget _buildIdleScreen(BoxDecoration container, ThemeData theme) {
     final sessions = _progress.sessions;
-    final lastSession = sessions.isEmpty ? null : sessions.last;
-    final days = dailyActivity(sessions, today: widget.now(), days: 30);
+    final days = dailyActivity(sessions, today: widget.now(), days: 84, wholeWeeks: true);
     final anyActivity = days.any((d) => d.active);
     final items = itemProgressList(_scheduler, curriculum: _curriculum);
     final unlockedCount =
@@ -550,12 +602,8 @@ class AdaptivePageState extends State<AdaptivePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ---- Hero: last session's speed & accuracy (the current readout;
-            //      the trend graph below shows the trajectory). ----
-            _buildStatTiles(theme, lastSession),
-
-            // ---- Trend ----
-            const SizedBox(height: 16),
+            // ---- Speed & accuracy trend (the skill that actually matters) ----
+            const SizedBox(height: 4),
             if (sessions.length >= 2)
               SessionTrendChart(sessions: sessions)
             else
@@ -577,7 +625,7 @@ class AdaptivePageState extends State<AdaptivePage> {
 
             // ---- Daily activity ----
             const Divider(height: 24),
-            _sectionLabel(theme, 'Daily activity', 'last 30 days'),
+            _sectionLabel(theme, 'Daily activity', 'last 12 weeks'),
             const SizedBox(height: 8),
             if (anyActivity)
               ActivityHeatmap(days: days)
@@ -600,69 +648,6 @@ class AdaptivePageState extends State<AdaptivePage> {
             const SizedBox(height: 8),
           ],
         ),
-      ),
-    );
-  }
-
-  /// Two big stat tiles showing your LAST session's accuracy and recognition
-  /// speed — the immediate "how you just did" readout. The trend graph below
-  /// carries the trajectory over time.
-  Widget _buildStatTiles(ThemeData theme, SessionSummary? last) {
-    final hasData = last != null && last.itemsSeen > 0;
-    final acc = hasData ? '${(last.accuracy * 100).round()}%' : '—';
-    final speed = hasData && last.medianLatencyMs > 0
-        ? '${last.medianLatencyMs}ms'
-        : '—';
-    final fast = hasData && last.medianLatencyMs > 0 &&
-        last.medianLatencyMs <= kIcrLatencyMs;
-    return Column(
-      children: [
-        Text(hasData ? 'Last session' : 'Your last session',
-            style: theme.textTheme.labelSmall?.copyWith(color: theme.hintColor)),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: _statTile(theme, 'ACCURACY', acc,
-                Icons.check_circle_outline, kMasteredColor)),
-            const SizedBox(width: 12),
-            Expanded(child: _statTile(theme, 'SPEED', speed, Icons.bolt,
-                fast ? kMasteredColor : theme.colorScheme.primary,
-                footnote: fast ? 'instant' : null)),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _statTile(ThemeData theme, String label, String value, IconData icon,
-      Color accent, {String? footnote}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-      decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: accent.withValues(alpha: 0.25)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 15, color: accent),
-              const SizedBox(width: 5),
-              Text(label,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                      color: accent, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(value,
-              style: theme.textTheme.headlineMedium
-                  ?.copyWith(fontWeight: FontWeight.bold)),
-          if (footnote != null)
-            Text(footnote,
-                style: theme.textTheme.bodySmall?.copyWith(color: accent)),
-        ],
       ),
     );
   }
@@ -754,38 +739,78 @@ class AdaptivePageState extends State<AdaptivePage> {
   }
 
   Widget _buildInput(BoxDecoration d, ThemeData theme) {
+    final typed = _answerController.text;
     return Container(
       decoration: d,
-      padding: const EdgeInsets.all(20),
-      alignment: Alignment.center,
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          const Spacer(),
           Text('What did you hear?', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _answerController,
-            focusNode: _answerFocus,
-            autofocus: true,
-            textAlign: TextAlign.center,
-            textCapitalization: TextCapitalization.characters,
-            autocorrect: false,
-            enableSuggestions: false,
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontFamily: 'monospace',
-              fontWeight: FontWeight.w600,
+          const SizedBox(height: 14),
+          // Read-only answer display (system keyboard suppressed; input comes
+          // from the CW keyboard below).
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              border: Border.all(color: theme.colorScheme.primary, width: 1.5),
+              borderRadius: BorderRadius.circular(8),
             ),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'type here',
+            alignment: Alignment.center,
+            child: Text(
+              typed.isEmpty ? ' ' : typed,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            onChanged: _onAnswerChanged,
-            onSubmitted: (_) => _submit(),
           ),
-          const SizedBox(height: 16),
-          FilledButton(onPressed: _submit, child: const Text('Check')),
+          const SizedBox(height: 10),
+          _buildElapsedBar(theme),
+          const Spacer(),
+          CwKeyboard(
+            onKey: _onCwKey,
+            onBackspace: _onCwBackspace,
+            onEnter: _submit,
+          ),
         ],
       ),
+    );
+  }
+
+  /// The "too long to answer" bar. Fills as time passes toward the per-item
+  /// target; turns red once you're over. Purely motivational — no auto-submit.
+  Widget _buildElapsedBar(ThemeData theme) {
+    final elapsed = _elapsedWatch.elapsedMilliseconds;
+    final frac = (elapsed / _elapsedTargetMs).clamp(0.0, 1.0);
+    final over = elapsed > _elapsedTargetMs;
+    final color = over
+        ? theme.colorScheme.error
+        : Color.lerp(kMasteredColor, kLearningColor, frac)!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: LinearProgressIndicator(
+            value: frac,
+            minHeight: 6,
+            backgroundColor: theme.disabledColor.withValues(alpha: 0.12),
+            valueColor: AlwaysStoppedAnimation(color),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          over ? 'Too slow — but finish it' : 'Answer before the bar fills',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: over ? theme.colorScheme.error : theme.hintColor,
+          ),
+        ),
+      ],
     );
   }
 

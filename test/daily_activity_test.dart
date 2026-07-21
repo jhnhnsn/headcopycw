@@ -60,4 +60,16 @@ void main() {
     final days = dailyActivity([old], today: today, days: 14);
     expect(days.every((d) => !d.active), isTrue);
   });
+
+  test('wholeWeeks snaps to full Sunday→Saturday weeks', () {
+    // 2026-07-21 is a Tuesday.
+    final days = dailyActivity([], today: today, days: 84, wholeWeeks: true);
+    // Count is a whole number of weeks.
+    expect(days.length % 7, 0);
+    // Starts on a Sunday (weekday 7) and ends on a Saturday (weekday 6).
+    expect(days.first.day.weekday, DateTime.sunday);
+    expect(days.last.day.weekday, DateTime.saturday);
+    // The window ends on the Saturday of today's week (2026-07-25).
+    expect(days.last.day, DateTime(2026, 7, 25));
+  });
 }

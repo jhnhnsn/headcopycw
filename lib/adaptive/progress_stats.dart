@@ -28,14 +28,22 @@ class DayActivity {
 
 DateTime _midnight(DateTime d) => DateTime(d.year, d.month, d.day);
 
-/// Builds a contiguous run of the last [days] calendar days ending on [today],
-/// oldest → newest, each filled with that day's aggregated session activity
-/// (empty days included so the heatmap shows gaps/streaks). Sessions are keyed
-/// by their [SessionSummary.endedAtMs] wall-clock timestamp.
+/// Weekday index with Sunday = 0 .. Saturday = 6 (DateTime: Mon=1..Sun=7).
+int _weekdaySun0(DateTime d) => d.weekday % 7;
+
+/// Builds a contiguous run of daily activity ending on [today], oldest → newest,
+/// each filled with that day's aggregated session activity (empty days included
+/// so the heatmap shows gaps/streaks). Sessions are keyed by their
+/// [SessionSummary.endedAtMs] wall-clock timestamp.
+///
+/// When [wholeWeeks] is true, the window is snapped to full Sunday→Saturday
+/// weeks: it ends on the Saturday of [today]'s week and begins on a Sunday so
+/// the calendar renders as a clean rectangle (no ragged first/last column).
 List<DayActivity> dailyActivity(
   List<SessionSummary> sessions, {
   required DateTime today,
   int days = 14,
+  bool wholeWeeks = false,
 }) {
   // Aggregate sessions into per-day buckets.
   final buckets = <DateTime, List<SessionSummary>>{};
@@ -43,9 +51,19 @@ List<DayActivity> dailyActivity(
     final d = _midnight(DateTime.fromMillisecondsSinceEpoch(s.endedAtMs));
     (buckets[d] ??= []).add(s);
   }
-  final end = _midnight(today);
+
+  DateTime end = _midnight(today);
+  var count = days;
+  if (wholeWeeks) {
+    // Extend end to the Saturday of the current week (Sat is 6 in Sun=0 terms).
+    end = end.add(Duration(days: 6 - _weekdaySun0(end)));
+    // Round the span up to a whole number of weeks.
+    final weeks = (days / 7).ceil();
+    count = weeks * 7;
+  }
+
   final out = <DayActivity>[];
-  for (var i = days - 1; i >= 0; i--) {
+  for (var i = count - 1; i >= 0; i--) {
     final day = end.subtract(Duration(days: i));
     final b = buckets[day] ?? const [];
     var items = 0, correct = 0;
