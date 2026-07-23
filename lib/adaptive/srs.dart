@@ -26,6 +26,133 @@ const int kIcrLatencyMs = 550;
 /// How many of the most recent grades feed the rolling accuracy/latency stats.
 const int kRollingWindow = 8;
 
+/// Bounds for the adaptive effective (Farnsworth) speed ramp. Effective speed
+/// never exceeds the fixed character speed (see kFixedActualWpm).
+const int kMinEffectiveWpm = 8;
+const int kMaxEffectiveWpm = 20;
+
+/// Decides the next adaptive effective-WPM from the current value and a
+/// completed session's aggregate performance. Pure so it's easy to test.
+///
+/// Ramps UP when a session was strong (high accuracy AND fast median
+/// recognition, with enough items to trust it) — the same signals that gate
+/// item unlocks, applied to speed. Eases DOWN when accuracy fell well below the
+/// gate, so a speed bump that hurt gets undone. Otherwise holds.
+int adaptEffectiveWpm({
+  required int current,
+  required int itemsSeen,
+  required double accuracy,
+  required int medianLatencyMs,
+  double accuracyGate = kAccuracyGate,
+  int icrLatencyMs = kIcrLatencyMs,
+}) {
+  // Too little evidence to move either way.
+  if (itemsSeen < 8) return current;
+
+  final strong = accuracy >= accuracyGate && medianLatencyMs <= icrLatencyMs;
+  final struggling = accuracy < accuracyGate - 0.15; // ~<75%
+
+  if (strong) {
+    return (current + 1).clamp(kMinEffectiveWpm, kMaxEffectiveWpm);
+  }
+  if (struggling) {
+    return (current - 1).clamp(kMinEffectiveWpm, kMaxEffectiveWpm);
+  }
+  return current;
+}
+
+// ---- Adaptive "copy-behind" buffer ----
+//
+// Research-grounded (CWops CW Academy sequencing; expertise-reversal; Toppino
+// 2018 grow-with-mastery; Pierpont's 1–2-words-behind cap; Baddeley loop):
+//   * Copy-behind is an ADVANCED skill — keep the buffer at 0 until the learner
+//     has demonstrated instant recognition on a base of items (the gate).
+//   * Then INTRODUCE and GROW a silent delay toward a ceiling, but only while
+//     accuracy stays high WITH the delay active (a retention-specific signal,
+//     kept separate from the speed adapter so difficulty isn't double-driven).
+//   * Ease back if accuracy suffers; hold at the hardest reliably-successful
+//     delay rather than growing forever.
+
+/// Number of mastered items before the copy-behind buffer is introduced (the
+/// ICR → copy-behind gate).
+const int kBufferGateMasteredItems = 15;
+
+/// Buffer bounds (ms). Starts here once the gate opens; grows toward the max
+/// (~2s ≈ one phonological-loop lifetime / "a word or two behind").
+const int kBufferStartMs = 400;
+const int kBufferMaxMs = 2000;
+const int kBufferStepMs = 150;
+
+/// Decides the next copy-behind buffer (ms) from the current value, the mastery
+/// count, and the accuracy observed *with the buffer active this session*.
+/// Pure/testable.
+///
+/// - Below the mastery gate → 0 (pure ICR phase).
+/// - At/after the gate, buffer 0 → introduce [kBufferStartMs].
+/// - Buffer active: grow while accuracy stays high; ease back if it drops;
+///   otherwise hold. [bufferedItems] guards against moving on thin evidence.
+int adaptBufferMs({
+  required int current,
+  required int masteredCount,
+  required int bufferedItems,
+  required double bufferedAccuracy,
+  double accuracyGate = kAccuracyGate,
+}) {
+  // Gate: no copy-behind until instant recognition is established.
+  if (masteredCount < kBufferGateMasteredItems) return 0;
+
+  // Just crossed the gate with no buffer yet → introduce a small one.
+  if (current <= 0) return kBufferStartMs;
+
+  // Not enough buffered evidence this session → hold.
+  if (bufferedItems < 8) return current;
+
+  final strong = bufferedAccuracy >= accuracyGate;
+  final struggling = bufferedAccuracy < accuracyGate - 0.15; // ~<75%
+
+  if (strong) {
+    return (current + kBufferStepMs).clamp(kBufferStartMs, kBufferMaxMs);
+  }
+  if (struggling) {
+    // Ease back toward (but not below) the introductory buffer.
+    return (current - kBufferStepMs).clamp(kBufferStartMs, kBufferMaxMs);
+  }
+  return current;
+}
+
+/// The "too slow to answer" bar's target for one item, in ms — adaptive to the
+/// learner's own recent pace rather than a fixed constant, so it tightens as
+/// they speed up. Pure/testable.
+///
+/// The per-character allowance is `median(history) × margin`, clamped to at
+/// least [floorMs] (so a typed bar still nudges toward the ICR target). With no
+/// history yet, [fallbackPerCharMs] is used so early sessions still show a
+/// sensible bar. Total = perChar × charCount, bounded to a reasonable window.
+int elapsedTargetMs({
+  required List<int> history,
+  required int charCount,
+  double margin = 1.7,
+  int floorMs = 0,
+  int fallbackPerCharMs = 550,
+}) {
+  final chars = charCount.clamp(1, 30);
+  int perChar;
+  if (history.isEmpty) {
+    perChar = fallbackPerCharMs;
+  } else {
+    final sorted = [...history]..sort();
+    final med = sorted[sorted.length ~/ 2];
+    // History is a per-item total; approximate its per-char pace. (Most items
+    // are short, so this stays close to the raw median for single chars.)
+    perChar = (med * margin).round();
+  }
+  if (perChar < floorMs) perChar = floorMs;
+  // Scale gently with length rather than strictly linearly (long phrases get
+  // proportionally less time per char once you're in a rhythm).
+  final total = (perChar * (0.6 + 0.4 * chars)).round();
+  return total.clamp(1200, 15000);
+}
+
 /// Leitner box intervals, in session reps, indexed by box number.
 /// A correct answer promotes to the next box (longer interval); an incorrect
 /// answer demotes toward box 0 (seen again almost immediately).

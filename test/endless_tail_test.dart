@@ -6,7 +6,6 @@ import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:head_copy_cw_trainer/morse_data.dart';
-import 'package:head_copy_cw_trainer/adaptive/curriculum.dart';
 import 'package:head_copy_cw_trainer/adaptive/curriculum_provider.dart';
 import 'package:head_copy_cw_trainer/adaptive/generator.dart';
 import 'package:head_copy_cw_trainer/adaptive/progress_stats.dart';

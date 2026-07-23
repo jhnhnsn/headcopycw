@@ -20,6 +20,12 @@ class SessionSummary {
   /// Wall-clock ms since epoch when the session ended.
   final int endedAtMs;
   final int durationSeconds;
+
+  /// The configured session length (seconds) this session was aiming for, or 0
+  /// if the session was unlimited. Lets a chart show duration as a fraction of
+  /// a full session (a completed fixed-length session == 100%).
+  final int targetSeconds;
+
   final int itemsSeen;
   final int correct;
   final int medianLatencyMs;
@@ -30,6 +36,7 @@ class SessionSummary {
   SessionSummary({
     required this.endedAtMs,
     required this.durationSeconds,
+    this.targetSeconds = 0,
     required this.itemsSeen,
     required this.correct,
     required this.medianLatencyMs,
@@ -40,9 +47,17 @@ class SessionSummary {
 
   int get newItemsUnlocked => unlockedIds.length;
 
+  /// Fraction of a full (target-length) session actually practised, 0..1.
+  /// Returns 1.0 for unlimited sessions (no target to measure against).
+  double get durationFraction {
+    if (targetSeconds <= 0) return 1.0;
+    return (durationSeconds / targetSeconds).clamp(0.0, 1.0);
+  }
+
   Map<String, dynamic> toJson() => {
         'endedAtMs': endedAtMs,
         'durationSeconds': durationSeconds,
+        'targetSeconds': targetSeconds,
         'itemsSeen': itemsSeen,
         'correct': correct,
         'medianLatencyMs': medianLatencyMs,
@@ -52,6 +67,7 @@ class SessionSummary {
   factory SessionSummary.fromJson(Map<String, dynamic> j) => SessionSummary(
         endedAtMs: (j['endedAtMs'] as num?)?.toInt() ?? 0,
         durationSeconds: (j['durationSeconds'] as num?)?.toInt() ?? 0,
+        targetSeconds: (j['targetSeconds'] as num?)?.toInt() ?? 0,
         itemsSeen: (j['itemsSeen'] as num?)?.toInt() ?? 0,
         correct: (j['correct'] as num?)?.toInt() ?? 0,
         medianLatencyMs: (j['medianLatencyMs'] as num?)?.toInt() ?? 0,
@@ -60,6 +76,14 @@ class SessionSummary {
                 const [],
       );
 }
+
+/// Starting effective (Farnsworth) speed for a brand-new learner. Character
+/// speed is fixed (see [kFixedActualWpm]); only this ramps up.
+const int kStartEffectiveWpm = 12;
+
+/// Fixed character speed for Copy mode — learn at target speed from day one
+/// (Koch). Only the effective/Farnsworth speed adapts.
+const int kFixedActualWpm = 20;
 
 /// The full persisted blob for adaptive mode.
 class AdaptiveProgress {
@@ -70,16 +94,51 @@ class AdaptiveProgress {
   /// due scheduling stays monotonic across app restarts.
   int totalReps;
 
+  /// Current adaptive effective (Farnsworth) speed in WPM. The app raises this
+  /// as recognition gets fast & accurate, and eases it back if it hurts.
+  int effectiveWpm;
+
+  /// Current adaptive copy-behind buffer (ms) — the silent pause after audio
+  /// before you answer. 0 until instant recognition is established, then it
+  /// grows as an advanced retention skill. See adaptBufferMs.
+  int bufferMs;
+
+  /// Recent per-item TYPED recognition times (ms), newest last, capped. Drives
+  /// the adaptive "too slow" bar in typed mode.
+  final List<int> recentTypedMs;
+
+  /// Recent per-item PAPER copy times (ms) — audio-end → Done tap, newest last,
+  /// capped. Drives the adaptive bar in paper mode (separate from typed).
+  final List<int> recentPaperMs;
+
   AdaptiveProgress({
     Map<String, ItemState>? itemStates,
     List<SessionSummary>? sessions,
     this.totalReps = 0,
+    this.effectiveWpm = kStartEffectiveWpm,
+    this.bufferMs = 0,
+    List<int>? recentTypedMs,
+    List<int>? recentPaperMs,
   })  : itemStates = itemStates ?? <String, ItemState>{},
-        sessions = sessions ?? <SessionSummary>[];
+        sessions = sessions ?? <SessionSummary>[],
+        recentTypedMs = recentTypedMs ?? <int>[],
+        recentPaperMs = recentPaperMs ?? <int>[];
+
+  /// Appends a per-item time to a capped rolling history (keeps the last 30).
+  static void pushCapped(List<int> history, int ms) {
+    history.add(ms);
+    while (history.length > 30) {
+      history.removeAt(0);
+    }
+  }
 
   Map<String, dynamic> toJson() => {
         'version': 1,
         'totalReps': totalReps,
+        'effectiveWpm': effectiveWpm,
+        'bufferMs': bufferMs,
+        'recentTypedMs': recentTypedMs,
+        'recentPaperMs': recentPaperMs,
         'itemStates': itemStates.map((k, v) => MapEntry(k, v.toJson())),
         'sessions': sessions.map((s) => s.toJson()).toList(),
       };
@@ -88,6 +147,16 @@ class AdaptiveProgress {
     final rawStates = (j['itemStates'] as Map?) ?? {};
     return AdaptiveProgress(
       totalReps: (j['totalReps'] as num?)?.toInt() ?? 0,
+      effectiveWpm: (j['effectiveWpm'] as num?)?.toInt() ?? kStartEffectiveWpm,
+      bufferMs: (j['bufferMs'] as num?)?.toInt() ?? 0,
+      recentTypedMs: (j['recentTypedMs'] as List?)
+              ?.map((e) => (e as num).toInt())
+              .toList() ??
+          <int>[],
+      recentPaperMs: (j['recentPaperMs'] as List?)
+              ?.map((e) => (e as num).toInt())
+              .toList() ??
+          <int>[],
       itemStates: rawStates.map(
         (k, v) => MapEntry(
             k as String, ItemState.fromJson((v as Map).cast<String, dynamic>())),

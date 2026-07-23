@@ -72,4 +72,23 @@ void main() {
     // The window ends on the Saturday of today's week (2026-07-25).
     expect(days.last.day, DateTime(2026, 7, 25));
   });
+
+  test('week alignment holds across a long DST-crossing window', () {
+    // A wide window (259 days) reaches back across a DST change; day arithmetic
+    // must stay calendar-correct so the grid never mis-aligns.
+    for (final t in [
+      DateTime(2026, 7, 23),
+      DateTime(2026, 3, 20), // just after spring-forward
+      DateTime(2026, 11, 5), // just after fall-back
+    ]) {
+      final days = dailyActivity([], today: t, days: 259, wholeWeeks: true);
+      expect(days.length % 7, 0);
+      expect(days.first.day.weekday, DateTime.sunday, reason: 'today=$t');
+      expect(days.last.day.weekday, DateTime.saturday, reason: 'today=$t');
+      // Every 7th day (a column boundary) is a Sunday.
+      for (var i = 0; i < days.length; i += 7) {
+        expect(days[i].day.weekday, DateTime.sunday);
+      }
+    }
+  });
 }

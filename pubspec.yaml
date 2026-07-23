@@ -23,8 +23,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/cw-words.txt
-    - assets/common-english-words.txt
-    - assets/qsos.txt
-    - assets/callsigns.txt
     - assets/HELP.md

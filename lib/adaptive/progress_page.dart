@@ -44,31 +44,34 @@ class ActivityHeatmap extends StatelessWidget {
     if (days.isEmpty) return const SizedBox.shrink();
 
     // Build week columns. Each day lands on its real weekday row (Sun=0). A new
-    // column begins whenever we reach Sunday (after the first day); leading and
-    // trailing gaps are left as nulls (blank slots).
-    final columns = <List<DayActivity?>>[];
+    // column begins each Sunday; leading/trailing gaps are null (blank) slots.
+    // The data is Sunday-aligned (see dailyActivity wholeWeeks), so the first
+    // column has no leading gap.
+    final allColumns = <List<DayActivity?>>[];
     var col = List<DayActivity?>.filled(7, null);
     var started = false;
     for (final d in days) {
       final r = _row(d.day);
       if (r == 0 && started) {
-        columns.add(col);
+        allColumns.add(col);
         col = List<DayActivity?>.filled(7, null);
       }
       col[r] = d;
       started = true;
     }
-    if (started) columns.add(col);
+    if (started) allColumns.add(col);
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        const gap = 3.0;
-        const labelW = 16.0;
-        final nCols = columns.length;
-        // Size cells to fit width; cap so they don't get huge with few weeks.
+        const gap = 2.0;
+        const labelW = 14.0;
+        // Fixed GitHub-style square size — don't stretch cells; draw as many
+        // week columns as fit the width instead (showing the most recent).
+        const cell = 13.0;
         final avail = constraints.maxWidth - labelW - gap;
-        final cell =
-            ((avail - gap * (nCols - 1)) / nCols).clamp(8.0, 18.0);
+        final fitCols = ((avail + gap) / (cell + gap)).floor().clamp(1, allColumns.length);
+        final columns = allColumns.sublist(allColumns.length - fitCols);
+        final nCols = columns.length;
 
         // Month labels: show a month abbreviation above the first column whose
         // top-most real day starts a new month.
@@ -204,28 +207,40 @@ class SessionTrendChart extends StatelessWidget {
               sessions: recent,
               accuracyColor: kMasteredColor,
               speedColor: theme.colorScheme.primary,
+              durationColor: theme.disabledColor.withValues(alpha: 0.18),
               gridColor: theme.dividerColor,
               textColor: theme.hintColor,
             ),
           ),
         ),
         const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 16,
+          runSpacing: 4,
           children: [
             _swatch(kMasteredColor, 'accuracy %', theme),
-            const SizedBox(width: 16),
             _swatch(theme.colorScheme.primary, 'speed (ms)', theme),
+            _swatch(theme.disabledColor.withValues(alpha: 0.35),
+                'session completed', theme, bar: true),
           ],
         ),
       ],
     );
   }
 
-  Widget _swatch(Color c, String label, ThemeData theme) => Row(
+  Widget _swatch(Color c, String label, ThemeData theme, {bool bar = false}) =>
+      Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(width: 14, height: 3, color: c),
+          Container(
+            width: bar ? 8 : 14,
+            height: bar ? 10 : 3,
+            decoration: BoxDecoration(
+              color: c,
+              borderRadius: bar ? BorderRadius.circular(2) : null,
+            ),
+          ),
           const SizedBox(width: 6),
           Text(label, style: theme.textTheme.bodySmall),
         ],
@@ -236,6 +251,7 @@ class _TrendPainter extends CustomPainter {
   final List<SessionSummary> sessions;
   final Color accuracyColor;
   final Color speedColor;
+  final Color durationColor;
   final Color gridColor;
   final Color textColor;
 
@@ -243,6 +259,7 @@ class _TrendPainter extends CustomPainter {
     required this.sessions,
     required this.accuracyColor,
     required this.speedColor,
+    required this.durationColor,
     required this.gridColor,
     required this.textColor,
   });
@@ -280,9 +297,33 @@ class _TrendPainter extends CustomPainter {
       return plot.bottom - plot.height * norm;
     }
 
+    final n = sessions.length;
+
+    // Session-time bars behind the lines: height is the fraction of a FULL
+    // (target-length) session actually practised — a completed fixed-length
+    // session is a full-height bar; a session stopped early is that fraction.
+    // Drawn first so the lines sit on top.
+    final barPaint = Paint()..color = durationColor;
+    final barW = n <= 1
+        ? plot.width * 0.15
+        : (plot.width / (n - 1) * 0.5).clamp(3.0, 22.0);
+    for (var i = 0; i < n; i++) {
+      final frac = sessions[i].durationFraction;
+      // Bars occupy the lower ~40% of the plot so they don't swamp the lines.
+      final barH = plot.height * 0.4 * frac;
+      if (barH <= 0) continue;
+      final cx = xFor(i);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(cx - barW / 2, plot.bottom - barH, barW, barH),
+          const Radius.circular(2),
+        ),
+        barPaint,
+      );
+    }
+
     // Label every point when there are few; thin out when crowded so the
     // numbers stay readable. Always label the most recent point.
-    final n = sessions.length;
     final step = n <= 6 ? 1 : (n <= 12 ? 2 : 3);
     bool labelAt(int i) => i == n - 1 || i % step == 0;
 

@@ -52,11 +52,16 @@ List<DayActivity> dailyActivity(
     (buckets[d] ??= []).add(s);
   }
 
+  // Use calendar arithmetic (DateTime(y, m, d + n)), NOT Duration(days: n):
+  // a Duration is exactly 24h, so across a DST change it drifts onto the wrong
+  // calendar day and mis-aligns the weekday grid.
+  DateTime addDays(DateTime d, int n) => DateTime(d.year, d.month, d.day + n);
+
   DateTime end = _midnight(today);
   var count = days;
   if (wholeWeeks) {
     // Extend end to the Saturday of the current week (Sat is 6 in Sun=0 terms).
-    end = end.add(Duration(days: 6 - _weekdaySun0(end)));
+    end = addDays(end, 6 - _weekdaySun0(end));
     // Round the span up to a whole number of weeks.
     final weeks = (days / 7).ceil();
     count = weeks * 7;
@@ -64,7 +69,7 @@ List<DayActivity> dailyActivity(
 
   final out = <DayActivity>[];
   for (var i = count - 1; i >= 0; i--) {
-    final day = end.subtract(Duration(days: i));
+    final day = addDays(end, -i);
     final b = buckets[day] ?? const [];
     var items = 0, correct = 0;
     for (final s in b) {

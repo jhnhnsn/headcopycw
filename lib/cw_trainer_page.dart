@@ -1,9 +1,5 @@
-import 'dart:async';
 import 'dart:io';
-import 'dart:math';
-import 'dart:ui';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -13,7 +9,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart' show resetWindowSize;
 import 'morse_data.dart';
-import 'morse_engine.dart';
 import 'adaptive/adaptive_page.dart';
 
 /// Returns the assets directory path for user-editable files.
@@ -41,10 +36,6 @@ Future<Directory?> getAssetsDirectory() async {
 }
 
 const _assetFiles = [
-  'cw-words.txt',
-  'common-english-words.txt',
-  'qsos.txt',
-  'callsigns.txt',
   'HELP.md',
 ];
 
@@ -62,22 +53,6 @@ Future<void> initializeUserAssets() async {
       } catch (e) {
         // Asset not found or write failed, skip
       }
-    }
-  }
-}
-
-/// Resets all user assets to the bundled defaults.
-Future<void> resetUserAssets() async {
-  final assetsDir = await getAssetsDirectory();
-  if (assetsDir == null) return;
-
-  for (final fileName in _assetFiles) {
-    final file = File('${assetsDir.path}${Platform.pathSeparator}$fileName');
-    try {
-      final content = await rootBundle.loadString('assets/$fileName');
-      await file.writeAsString(content);
-    } catch (e) {
-      // Asset not found or write failed, skip
     }
   }
 }
@@ -104,142 +79,35 @@ Future<String> loadAssetFile(String fileName) async {
   return await rootBundle.loadString('assets/$fileName');
 }
 
-/// Opens the assets folder in the system file browser.
-/// On mobile, shows a dialog with the path since direct folder opening isn't supported.
-Future<void> openAssetsFolder(BuildContext context) async {
-  final assetsDir = await getAssetsDirectory();
-  if (assetsDir == null) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Custom files not supported on this platform')),
-      );
-    }
-    return;
-  }
 
-  final path = assetsDir.path;
-
-  if (Platform.isWindows) {
-    await Process.run('explorer.exe', [path]);
-  } else if (Platform.isMacOS) {
-    await Process.run('open', [path]);
-  } else if (Platform.isLinux) {
-    await Process.run('xdg-open', [path]);
-  } else {
-    // Mobile platforms: show dialog with path
-    if (context.mounted) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Assets Folder'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Your custom files are stored at:'),
-              const SizedBox(height: 12),
-              SelectableText(
-                path,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
-              const SizedBox(height: 12),
-              if (Platform.isIOS)
-                const Text(
-                  'Open the Files app → On My iPhone → Head Copy → assets',
-                  style: TextStyle(fontStyle: FontStyle.italic),
-                ),
-              if (Platform.isAndroid)
-                const Text(
-                  'Use a file manager app to navigate to this folder.',
-                  style: TextStyle(fontStyle: FontStyle.italic),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-}
-
-enum PracticeMode { adaptive, characters, groups, words, qso }
-
-enum WordListType { cwWords, commonWords, callsigns }
-
-WordListType _parseWordListType(String? value) {
-  switch (value) {
-    case 'common':
-      return WordListType.commonWords;
-    case 'callsigns':
-      return WordListType.callsigns;
-    default:
-      return WordListType.cwWords;
-  }
-}
-
-String _wordListTypeToString(WordListType type) {
-  switch (type) {
-    case WordListType.commonWords:
-      return 'common';
-    case WordListType.callsigns:
-      return 'callsigns';
-    case WordListType.cwWords:
-      return 'cw';
-  }
-}
 
 final _kValidTones = [for (var i = 350; i <= 1500; i += 25) i];
 
 class CwTrainerSettings {
-  int actualWpm = 20;
-  int effectiveWpm = 15;
-  EffectiveSpeedMode effectiveMode = EffectiveSpeedMode.farnsworth;
-  int kochLearnedCount = 2;
   int frequencyHz = 700;
-  int groupSize = 5;
-  bool wordsOnlyLearnedLetters = true;
-  WordListType wordListType = WordListType.cwWords;
-  /// Delay (ms) before showing received characters; playing the next is not delayed.
-  int displayDelayMs = 400;
   /// Session length in minutes (0 = unlimited).
   int sessionLengthMinutes = 5;
   /// The learner's own callsign (uppercase, encodable), or '' if unset. Used in
   /// the adaptive Copy curriculum and generated exchanges.
   String callsign = '';
+  /// Copy on paper: no typing during the session (hear → write → Done), then
+  /// enter everything at the end to score.
+  bool paperMode = false;
 
   static Future<CwTrainerSettings> load(SharedPreferences prefs) async {
     final hz = prefs.getInt('frequencyHz') ?? 700;
     return CwTrainerSettings()
-      ..actualWpm = prefs.getInt('actualWpm') ?? 20
-      ..effectiveWpm = prefs.getInt('effectiveWpm') ?? 15
-      ..effectiveMode = prefs.getString('effectiveMode') == 'wordsworth' ? EffectiveSpeedMode.wordsworth : EffectiveSpeedMode.farnsworth
-      ..kochLearnedCount = prefs.getInt('kochLearnedCount') ?? 2
       ..frequencyHz = _kValidTones.contains(hz) ? hz : 700
-      ..groupSize = prefs.getInt('groupSize') ?? 5
-      ..wordsOnlyLearnedLetters = prefs.getBool('wordsOnlyLearnedLetters') ?? true
-      ..wordListType = _parseWordListType(prefs.getString('wordListType'))
-      ..displayDelayMs = prefs.getInt('displayDelayMs') ?? 400
       ..sessionLengthMinutes = prefs.getInt('sessionLengthMinutes') ?? 5
-      ..callsign = prefs.getString('callsign') ?? '';
+      ..callsign = prefs.getString('callsign') ?? ''
+      ..paperMode = prefs.getBool('paperMode') ?? false;
   }
 
   static Future<void> save(SharedPreferences prefs, CwTrainerSettings s) async {
-    await prefs.setInt('actualWpm', s.actualWpm);
-    await prefs.setInt('effectiveWpm', s.effectiveWpm);
-    await prefs.setString('effectiveMode', s.effectiveMode == EffectiveSpeedMode.wordsworth ? 'wordsworth' : 'farnsworth');
-    await prefs.setInt('kochLearnedCount', s.kochLearnedCount);
     await prefs.setInt('frequencyHz', s.frequencyHz);
-    await prefs.setInt('groupSize', s.groupSize);
-    await prefs.setBool('wordsOnlyLearnedLetters', s.wordsOnlyLearnedLetters);
-    await prefs.setString('wordListType', _wordListTypeToString(s.wordListType));
-    await prefs.setInt('displayDelayMs', s.displayDelayMs);
     await prefs.setInt('sessionLengthMinutes', s.sessionLengthMinutes);
     await prefs.setString('callsign', s.callsign);
+    await prefs.setBool('paperMode', s.paperMode);
   }
 }
 
@@ -261,40 +129,16 @@ class CwTrainerPage extends StatefulWidget {
   State<CwTrainerPage> createState() => _CwTrainerPageState();
 }
 
-class _CwTrainerPageState extends State<CwTrainerPage>
-    with SingleTickerProviderStateMixin {
-  final AudioPlayer _player = AudioPlayer();
-  final Random _rnd = Random();
-  final ScrollController _scrollController = ScrollController();
+class _CwTrainerPageState extends State<CwTrainerPage> {
   CwTrainerSettings _settings = CwTrainerSettings();
-  PracticeMode _mode = PracticeMode.adaptive;
   Directory? _storageDir;
-  /// Bumped when Copy progress is reset, to force a fresh AdaptivePage (which
-  /// otherwise holds in-memory state that would re-save on dispose).
+  /// Bumped when Copy progress is reset (or callsign changes), to force a fresh
+  /// AdaptivePage (which otherwise holds in-memory state that re-saves on dispose).
   int _adaptiveEpoch = 0;
-  bool _running = false;
-  bool _paused = false;
-  String _displayText = '';
-  StreamSubscription? _completeSub;
-  Timer? _sessionTimer;
-  Timer? _countdownTimer;
-  int _remainingSeconds = 0;
-  List<String> _cwWords = [];
-  List<String> _commonWords = [];
-  List<String> _callsigns = [];
-  List<List<String>> _qsos = [];
-  int _currentQsoIndex = -1;
-  int _currentQsoLine = 0;
-  bool _startingNewQso = false;
-  AnimationController? _pauseFlashController;
 
   @override
   void initState() {
     super.initState();
-    _pauseFlashController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
     _initializeApp();
   }
 
@@ -303,7 +147,6 @@ class _CwTrainerPageState extends State<CwTrainerPage>
     final dir = await getAssetsDirectory();
     if (mounted) setState(() => _storageDir = dir);
     _loadPreferences();
-    _loadWordLists();
     _checkFirstLaunch();
   }
 
@@ -326,234 +169,10 @@ class _CwTrainerPageState extends State<CwTrainerPage>
     );
   }
 
-  Future<void> _loadWordLists() async {
-    final cwText = await loadAssetFile('cw-words.txt');
-    final englishText = await loadAssetFile('common-english-words.txt');
-    final callsignsText = await loadAssetFile('callsigns.txt');
-    final qsoText = await loadAssetFile('qsos.txt');
-    if (mounted) {
-      setState(() {
-        _cwWords = cwText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
-        _commonWords = englishText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
-        _callsigns = callsignsText.split('\n').map((w) => w.trim().toUpperCase()).where((w) => w.isNotEmpty).toList();
-        _qsos = parseQsoBlocks(qsoText);
-      });
-    }
-  }
-
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     final s = await CwTrainerSettings.load(prefs);
     if (mounted) setState(() => _settings = s);
-  }
-
-  @override
-  void dispose() {
-    _completeSub?.cancel();
-    _sessionTimer?.cancel();
-    _countdownTimer?.cancel();
-    _scrollController.dispose();
-    _pauseFlashController?.dispose();
-    _player.dispose();
-    super.dispose();
-  }
-
-  Set<String> get _learned => kochLearnedSet(_settings.kochLearnedCount).toSet();
-
-  String get _buttonLabel {
-    if (_settings.sessionLengthMinutes == 0) return 'Stop';
-    final mins = _remainingSeconds ~/ 60;
-    final secs = _remainingSeconds % 60;
-    return 'Stop ${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
-  }
-
-  List<String> get _filteredWords {
-    final source = _settings.wordListType == WordListType.cwWords
-        ? _cwWords
-        : _settings.wordListType == WordListType.commonWords
-            ? _commonWords
-            : _callsigns;
-    // No filtering by learned letters - show all words
-    return source.where((w) => w.split('').every((c) => kMorseCode.containsKey(c))).toList();
-  }
-
-  bool get _hasWords {
-    return _filteredWords.isNotEmpty;
-  }
-
-  String _nextCharacters() {
-    final set = _learned;
-    if (set.isEmpty) return '';
-    return set.elementAt(_rnd.nextInt(set.length));
-  }
-
-  String _nextGroup() {
-    final list = _learned.toList();
-    if (list.isEmpty) return '';
-    final maxSize = _settings.groupSize.clamp(2, 10);
-    final n = 2 + _rnd.nextInt(maxSize - 1); // Random size from 2 to maxSize
-    return List.generate(n, (_) => list[_rnd.nextInt(list.length)]).join();
-  }
-
-  String _nextWord() {
-    var list = _filteredWords;
-    if (list.isEmpty) return '';
-    return list[_rnd.nextInt(list.length)];
-  }
-
-  String _nextQso() {
-    // Fallback to built-in phrases if no QSOs loaded
-    if (_qsos.isEmpty) {
-      if (kQsoPhrases.isEmpty) return '';
-      _startingNewQso = true;
-      return kQsoPhrases[_rnd.nextInt(kQsoPhrases.length)];
-    }
-    // Pick a new random QSO if needed
-    if (_currentQsoIndex < 0 || _currentQsoLine >= _qsos[_currentQsoIndex].length) {
-      _startingNewQso = _currentQsoIndex >= 0; // True if we just finished a QSO
-      _currentQsoIndex = _rnd.nextInt(_qsos.length);
-      _currentQsoLine = 0;
-    } else {
-      _startingNewQso = false;
-    }
-    // Return the next line of the current QSO
-    final line = _qsos[_currentQsoIndex][_currentQsoLine];
-    _currentQsoLine++;
-    return line;
-  }
-
-  String _nextPayload() {
-    switch (_mode) {
-      case PracticeMode.adaptive:
-        return ''; // Adaptive mode runs its own loop (AdaptivePage).
-      case PracticeMode.characters:
-        return _nextCharacters();
-      case PracticeMode.words:
-        return _nextWord();
-      case PracticeMode.groups:
-        return _nextGroup();
-      case PracticeMode.qso:
-        return _nextQso();
-    }
-  }
-
-  Future<void> _playNext() async {
-    if (!_running || _paused) return;
-    final text = _nextPayload();
-    final isNewQso = _startingNewQso; // Capture before next call changes it
-    if (text.isEmpty) {
-      _scheduleNext();
-      return;
-    }
-    final wavPath = await renderMorseWavFile(
-      text: text,
-      actualWpm: _settings.actualWpm,
-      effectiveWpm: _settings.effectiveWpm,
-      effectiveMode: _settings.effectiveMode,
-      frequencyHz: _settings.frequencyHz.toDouble(),
-    );
-    _completeSub?.cancel();
-    _completeSub = _player.onPlayerComplete.listen((_) {
-      if (!_running) return;
-      // Delay only the display of what was just played.
-      Future.delayed(Duration(milliseconds: _settings.displayDelayMs), () {
-        if (!mounted) return;
-        setState(() {
-          if (_mode == PracticeMode.qso) {
-            if (_displayText.isEmpty) {
-              _displayText = text;
-            } else if (isNewQso) {
-              _displayText = '$_displayText\n\n— — —\n\n$text';
-            } else {
-              _displayText = '$_displayText\n$text';
-            }
-          } else {
-            _displayText = _displayText.isEmpty ? text : '$_displayText $text';
-          }
-        });
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-          }
-        });
-      });
-      // Play next immediately (no delay).
-      _scheduleNext();
-    });
-    await _player.stop();
-    await _player.play(DeviceFileSource(wavPath));
-  }
-
-  void _scheduleNext() {
-    if (!_running || _paused) return;
-    Duration delay = Duration.zero;
-    if (_mode == PracticeMode.words || _mode == PracticeMode.groups) {
-      // 7 dits inter-word gap at effective speed
-      final ditSeconds = _settings.effectiveWpm > 0 ? 1.2 / _settings.effectiveWpm : 0.06;
-      delay = Duration(milliseconds: (7 * ditSeconds * 1000).round());
-    } else if (_mode == PracticeMode.qso && _startingNewQso) {
-      delay = const Duration(milliseconds: 1500);
-    }
-    Future.delayed(delay, _playNext);
-  }
-
-  Future<void> _togglePause() async {
-    if (!_running) return;
-    if (_paused) {
-      // Resume
-      _pauseFlashController?.stop();
-      _pauseFlashController?.reset();
-      setState(() => _paused = false);
-      _playNext();
-    } else {
-      // Pause
-      setState(() => _paused = true);
-      _pauseFlashController?.repeat(reverse: true);
-      await _player.stop();
-      _completeSub?.cancel();
-    }
-  }
-
-  Future<void> _toggleRun() async {
-    if (_running) {
-      _pauseFlashController?.stop();
-      _pauseFlashController?.reset();
-      setState(() {
-        _running = false;
-        _paused = false;
-      });
-      await _player.stop();
-      _completeSub?.cancel();
-      _sessionTimer?.cancel();
-      _countdownTimer?.cancel();
-      return;
-    }
-    setState(() {
-      _running = true;
-      _paused = false;
-      _displayText = '';
-      _remainingSeconds = _settings.sessionLengthMinutes * 60;
-      _currentQsoIndex = -1;
-      _currentQsoLine = 0;
-      _startingNewQso = false;
-    });
-    // Start session timer if session length is set
-    _sessionTimer?.cancel();
-    _countdownTimer?.cancel();
-    if (_settings.sessionLengthMinutes > 0) {
-      _sessionTimer = Timer(Duration(minutes: _settings.sessionLengthMinutes), () {
-        if (_running && mounted) {
-          _toggleRun();
-        }
-      });
-      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted || !_running || _paused) return;
-        setState(() {
-          if (_remainingSeconds > 0) _remainingSeconds--;
-        });
-      });
-    }
-    _playNext();
   }
 
   Future<void> _openSetup() async {
@@ -569,304 +188,42 @@ class _CwTrainerPageState extends State<CwTrainerPage>
       ),
     );
     if (s != null && mounted) {
-      final callsignChanged = s.callsign != _settings.callsign;
+      // A changed callsign or paper-mode toggle changes the Copy loop, so
+      // rebuild the page to pick it up. Progress is preserved.
+      final rebuild = s.callsign != _settings.callsign ||
+          s.paperMode != _settings.paperMode;
       final prefs = await SharedPreferences.getInstance();
       await CwTrainerSettings.save(prefs, s);
       setState(() {
         _settings = s;
-        // A changed callsign changes the Copy curriculum, so rebuild the page
-        // to pick it up. Progress is preserved (no suppressNextDisposeFlush).
-        if (callsignChanged) _adaptiveEpoch++;
+        if (rebuild) _adaptiveEpoch++;
       });
     }
   }
 
-  String get _modeName {
-    switch (_mode) {
-      case PracticeMode.adaptive:
-        return 'Copy';
-      case PracticeMode.characters:
-        return 'Letters';
-      case PracticeMode.groups:
-        return 'Groups';
-      case PracticeMode.words:
-        return 'Words';
-      case PracticeMode.qso:
-        return 'QSO';
-    }
-  }
-
-  Color get _modeColor {
-    switch (_mode) {
-      case PracticeMode.adaptive:
-        return Colors.teal;
-      case PracticeMode.characters:
-        return Colors.blue;
-      case PracticeMode.groups:
-        return Colors.orange;
-      case PracticeMode.words:
-        return Colors.green;
-      case PracticeMode.qso:
-        return Colors.purple;
-    }
-  }
-
-  Future<void> _updateKochCount(int count) async {
-    setState(() => _settings.kochLearnedCount = count);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('kochLearnedCount', count);
-  }
-
-  Future<void> _updateGroupSize(int size) async {
-    setState(() => _settings.groupSize = size);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('groupSize', size);
-  }
-
-  Future<void> _updateWordListType(WordListType type) async {
-    setState(() => _settings.wordListType = type);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('wordListType', _wordListTypeToString(type));
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isAdaptive = _mode == PracticeMode.adaptive;
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: _modeColor,
+        backgroundColor: Colors.teal,
         foregroundColor: Colors.white,
-        // When in a drill, show a back arrow to return to Copy.
-        leading: isAdaptive
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.arrow_back),
-                tooltip: 'Back to Copy',
-                onPressed: () => _switchMode(PracticeMode.adaptive),
-              ),
-        title: Text(_modeName),
+        title: const Text('Copy'),
         actions: [
           IconButton(icon: const Icon(Icons.help_outline), tooltip: 'Help', onPressed: _openInfo),
-          IconButton(icon: const Icon(Icons.settings), onPressed: _openSetup),
-          if (isAdaptive)
-            PopupMenuButton<PracticeMode>(
-              icon: const Icon(Icons.more_vert),
-              tooltip: 'Practice drills',
-              onSelected: _switchMode,
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  enabled: false,
-                  child: Text('Practice drills', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                PopupMenuItem(value: PracticeMode.characters, child: Text('Letters')),
-                PopupMenuItem(value: PracticeMode.groups, child: Text('Groups')),
-                PopupMenuItem(value: PracticeMode.words, child: Text('Words')),
-                PopupMenuItem(value: PracticeMode.qso, child: Text('QSO')),
-              ],
-            ),
+          IconButton(icon: const Icon(Icons.settings), tooltip: 'Settings', onPressed: _openSetup),
         ],
       ),
-      body: isAdaptive ? _buildAdaptiveBody() : _buildLegacyBody(),
-      // Drills keep a small tab bar to switch between the four legacy modes.
-      bottomNavigationBar: isAdaptive
-          ? null
-          : NavigationBar(
-              selectedIndex: _drillIndex(_mode),
-              onDestinationSelected: (i) => _switchMode(_drillModes[i]),
-              destinations: const [
-                NavigationDestination(icon: Icon(Icons.sort_by_alpha), label: 'Letters'),
-                NavigationDestination(icon: Icon(Icons.abc), label: 'Groups'),
-                NavigationDestination(icon: Icon(Icons.menu_book), label: 'Words'),
-                NavigationDestination(icon: Icon(Icons.record_voice_over), label: 'QSO'),
-              ],
-            ),
-    );
-  }
-
-  static const List<PracticeMode> _drillModes = [
-    PracticeMode.characters,
-    PracticeMode.groups,
-    PracticeMode.words,
-    PracticeMode.qso,
-  ];
-
-  int _drillIndex(PracticeMode m) {
-    final i = _drillModes.indexOf(m);
-    return i < 0 ? 0 : i;
-  }
-
-  /// Switches practice mode, stopping any running legacy session first so a
-  /// drill's audio doesn't keep playing after you leave it.
-  void _switchMode(PracticeMode m) {
-    if (_running) {
-      _pauseFlashController?.stop();
-      _pauseFlashController?.reset();
-      _player.stop();
-      _completeSub?.cancel();
-      _sessionTimer?.cancel();
-      _countdownTimer?.cancel();
-      _running = false;
-      _paused = false;
-    }
-    setState(() => _mode = m);
-  }
-
-  Widget _buildAdaptiveBody() {
-    return AdaptivePage(
-      key: ValueKey('adaptive-$_adaptiveEpoch'),
-      storageDir: _storageDir,
-      settings: AdaptiveSettings(
-        actualWpm: _settings.actualWpm,
-        effectiveWpm: _settings.effectiveWpm,
-        effectiveMode: _settings.effectiveMode,
-        frequencyHz: _settings.frequencyHz,
-        bufferDelayMs: _settings.displayDelayMs,
-        sessionLengthMinutes: _settings.sessionLengthMinutes,
-        callsign: _settings.callsign,
+      body: AdaptivePage(
+        key: ValueKey('adaptive-$_adaptiveEpoch'),
+        storageDir: _storageDir,
+        settings: AdaptiveSettings(
+          frequencyHz: _settings.frequencyHz,
+          sessionLengthMinutes: _settings.sessionLengthMinutes,
+          callsign: _settings.callsign,
+          paperMode: _settings.paperMode,
+        ),
       ),
     );
-  }
-
-  Widget _buildLegacyBody() {
-    return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Effective speed indicator
-            Text(
-              '${_settings.effectiveWpm} / ${_settings.actualWpm} WPM · ${_settings.effectiveMode == EffectiveSpeedMode.farnsworth ? "Farnsworth" : "Wordsworth"}',
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            // Characters slider (only in Letters mode)
-            if (_mode == PracticeMode.characters) ...[
-              const SizedBox(height: 8),
-              Text('Letters (${_settings.kochLearnedCount})', style: Theme.of(context).textTheme.labelLarge),
-              Slider(
-                value: _settings.kochLearnedCount.toDouble(),
-                min: 2,
-                max: 40,
-                divisions: 38,
-                label: '${_settings.kochLearnedCount}',
-                onChanged: (v) => _updateKochCount(v.round()),
-              ),
-            ],
-            // Group size slider (only in Groups mode)
-            if (_mode == PracticeMode.groups) ...[
-              const SizedBox(height: 8),
-              Text('Max Group Size (${_settings.groupSize})', style: Theme.of(context).textTheme.labelLarge),
-              Slider(
-                value: _settings.groupSize.toDouble(),
-                min: 2,
-                max: 10,
-                divisions: 8,
-                label: '${_settings.groupSize}',
-                onChanged: (v) => _updateGroupSize(v.round()),
-              ),
-            ],
-            // Word list selector (only in Words mode)
-            if (_mode == PracticeMode.words) ...[
-              const SizedBox(height: 8),
-              SegmentedButton<WordListType>(
-                segments: const [
-                  ButtonSegment(value: WordListType.cwWords, label: Text('CW')),
-                  ButtonSegment(value: WordListType.commonWords, label: Text('Common')),
-                  ButtonSegment(value: WordListType.callsigns, label: Text('Callsigns')),
-                ],
-                selected: {_settings.wordListType},
-                onSelectionChanged: (s) => _updateWordListType(s.first),
-              ),
-            ],
-            const SizedBox(height: 12),
-            // Display (echo after sent)
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Positioned.fill(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Theme.of(context).dividerColor),
-                        ),
-                        child: SingleChildScrollView(
-                          controller: _scrollController,
-                          child: SelectableText(
-                            _displayText.isEmpty ? '—' : _displayText,
-                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  fontFamily: 'monospace',
-                                  fontWeight: FontWeight.w500,
-                                ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (_running)
-                      Positioned.fill(
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                          child: Container(
-                            color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Error message
-            if (_mode == PracticeMode.words && !_hasWords)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  'No words available',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            // Start / Stop / Pause buttons
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: (_mode == PracticeMode.words && !_hasWords)
-                        ? null
-                        : _toggleRun,
-                    icon: Icon(_running ? Icons.stop : Icons.play_arrow),
-                    label: Text(_running ? _buttonLabel : 'Start'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                ),
-                if (_running) ...[
-                  const SizedBox(width: 8),
-                  AnimatedBuilder(
-                    animation: _pauseFlashController!,
-                    builder: (context, child) => Opacity(
-                      opacity: _paused ? 0.4 + 0.6 * _pauseFlashController!.value : 1.0,
-                      child: child,
-                    ),
-                    child: IconButton.filled(
-                      onPressed: _togglePause,
-                      icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
-                      tooltip: _paused ? 'Resume' : 'Pause',
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
-      );
   }
 }
 
@@ -881,24 +238,18 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  late int _actualWpm;
-  late int _effectiveWpm;
-  late EffectiveSpeedMode _effectiveMode;
   late double _pitchSlider;
-  late int _displayDelayMs;
   late int _sessionLengthMinutes;
+  late bool _paperMode;
   late TextEditingController _sessionLengthController;
   late TextEditingController _callsignController;
 
   @override
   void initState() {
     super.initState();
-    _actualWpm = widget.settings.actualWpm;
-    _effectiveWpm = widget.settings.effectiveWpm;
-    _effectiveMode = widget.settings.effectiveMode;
     _pitchSlider = _kValidTones.indexOf(widget.settings.frequencyHz).clamp(0, _kValidTones.length - 1).toDouble();
-    _displayDelayMs = widget.settings.displayDelayMs;
     _sessionLengthMinutes = widget.settings.sessionLengthMinutes;
+    _paperMode = widget.settings.paperMode;
     _sessionLengthController = TextEditingController(text: '$_sessionLengthMinutes');
     _callsignController = TextEditingController(text: widget.settings.callsign);
   }
@@ -912,17 +263,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _save() {
     Navigator.of(context).pop(CwTrainerSettings()
-      ..actualWpm = _actualWpm
-      ..effectiveWpm = _effectiveWpm
-      ..effectiveMode = _effectiveMode
-      ..kochLearnedCount = widget.settings.kochLearnedCount
       ..frequencyHz = _kValidTones[_pitchSlider.round().clamp(0, _kValidTones.length - 1)]
-      ..groupSize = widget.settings.groupSize
-      ..wordsOnlyLearnedLetters = widget.settings.wordsOnlyLearnedLetters
-      ..wordListType = widget.settings.wordListType
-      ..displayDelayMs = _displayDelayMs
       ..sessionLengthMinutes = _sessionLengthMinutes
-      ..callsign = normalizeCallsign(_callsignController.text));
+      ..callsign = normalizeCallsign(_callsignController.text)
+      ..paperMode = _paperMode);
   }
 
   @override
@@ -957,25 +301,32 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             const SizedBox(height: 16),
-            Text('Actual Speed ($_actualWpm WPM)', style: Theme.of(context).textTheme.labelLarge),
-            Slider(value: _actualWpm.toDouble(), min: 5, max: 40, divisions: 35, label: '$_actualWpm', onChanged: (v) => setState(() => _actualWpm = v.round())),
-            Text('Effective Speed ($_effectiveWpm WPM)', style: Theme.of(context).textTheme.labelLarge),
-            Slider(value: _effectiveWpm.toDouble(), min: 5, max: 40, divisions: 35, label: '$_effectiveWpm', onChanged: (v) => setState(() => _effectiveWpm = v.round())),
-            Text('Effective speed mode', style: Theme.of(context).textTheme.labelLarge),
-            SegmentedButton<EffectiveSpeedMode>(
-              segments: [
-                ButtonSegment(value: EffectiveSpeedMode.farnsworth, label: Text('Farnsworth', maxLines: 1, overflow: TextOverflow.ellipsis)),
-                ButtonSegment(value: EffectiveSpeedMode.wordsworth, label: Text('Wordsworth', maxLines: 1, overflow: TextOverflow.ellipsis)),
-              ],
-              selected: {_effectiveMode},
-              onSelectionChanged: (s) => setState(() => _effectiveMode = s.first),
+            // Difficulty is fully app-controlled — speed and the copy-behind
+            // buffer both adapt to you. Shown here read-only.
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.auto_graph, size: 18, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Difficulty adapts automatically — Copy starts gently and, as your '
+                      'recognition gets fast and accurate, speeds you up and adds a '
+                      '"copy behind" delay to build head-copy. Nothing to set.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
             Text('Pitch (${_kValidTones[_pitchSlider.round()]} Hz)', style: Theme.of(context).textTheme.labelLarge),
             Slider(value: _pitchSlider, min: 0, max: (_kValidTones.length - 1).toDouble(), divisions: _kValidTones.length - 1, label: '${_kValidTones[_pitchSlider.round()]}', onChanged: (v) => setState(() => _pitchSlider = v)),
-            const SizedBox(height: 8),
-            Text('Display Delay ($_displayDelayMs ms)', style: Theme.of(context).textTheme.labelLarge),
-            Slider(value: _displayDelayMs.toDouble(), min: 0, max: 5000, divisions: 50, label: '$_displayDelayMs', onChanged: (v) => setState(() => _displayDelayMs = v.round())),
             const SizedBox(height: 8),
             Text('Session Length ($_sessionLengthMinutes min)', style: Theme.of(context).textTheme.labelLarge),
             const SizedBox(height: 4),
@@ -1018,61 +369,34 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+
+            // Copy on paper toggle.
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _paperMode,
+              onChanged: (v) => setState(() => _paperMode = v),
+              title: const Text('Copy on paper'),
+              subtitle: Text(
+                'No typing during the session — hear it, write it, then enter '
+                'everything at the end to score.',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: Theme.of(context).hintColor),
+              ),
+            ),
+
             const SizedBox(height: 24),
             OutlinedButton(
               onPressed: () {
                 setState(() {
-                  _actualWpm = 20;
-                  _effectiveWpm = 15;
-                  _effectiveMode = EffectiveSpeedMode.farnsworth;
                   _pitchSlider = _kValidTones.indexOf(700).toDouble();
-                  _displayDelayMs = 400;
                   _sessionLengthMinutes = 5;
                   _sessionLengthController.text = '5';
+                  _paperMode = false;
                 });
                 resetWindowSize();
               },
               child: const Text('Reset to defaults'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => openAssetsFolder(context),
-              icon: const Icon(Icons.folder_open),
-              label: const Text('Open custom files folder'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () async {
-                final confirm = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Reset Files'),
-                    content: const Text(
-                      'This will overwrite your custom files with the default versions. Are you sure?',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(ctx).pop(false),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(ctx).pop(true),
-                        child: const Text('Reset'),
-                      ),
-                    ],
-                  ),
-                );
-                if (confirm == true && context.mounted) {
-                  await resetUserAssets();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Files reset to defaults')),
-                    );
-                  }
-                }
-              },
-              icon: const Icon(Icons.restore),
-              label: const Text('Reset files to defaults'),
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -1190,13 +514,13 @@ class _WelcomePageState extends State<WelcomePage> {
                   ),
                   _point(
                     theme,
-                    icon: Icons.hourglass_bottom,
-                    title: 'A pause that builds head copy',
+                    icon: Icons.speed,
+                    title: 'It adapts to you',
                     body:
-                        'A short delay before you answer trains you to hold the sound in your '
-                        'head and "copy behind," instead of scribbling letter by letter. It also '
-                        'times how fast you recognize each item, so you build instant recognition — '
-                        'not slow decoding.',
+                        'The app times how fast you recognize each item and only moves on when '
+                        'you\'re both accurate and quick. As you improve it speeds you up — and '
+                        'later adds a "copy behind" delay to build true head copy. You never set '
+                        'a difficulty.',
                   ),
                   _point(
                     theme,
@@ -1247,7 +571,7 @@ class _WelcomePageState extends State<WelcomePage> {
                         MaterialPageRoute(builder: (_) => const InfoPage()),
                       ),
                       icon: const Icon(Icons.menu_book),
-                      label: const Text('Full guide & classic Koch modes'),
+                      label: const Text('Full guide'),
                     ),
                   ),
                 ],
