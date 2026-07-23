@@ -35,6 +35,9 @@ migrate_working_dir/
 /build/
 /coverage/
 ./devtools_options.yaml
+# Untracked: transitive dep versions drift on `flutter pub get`. A solo app
+# built here doesn't need pinned lock; this stops recurring lockfile churn.
+pubspec.lock
 
 # CocoaPods lockfile generated on this machine (macOS platform folder)
 macos/Podfile.lock
