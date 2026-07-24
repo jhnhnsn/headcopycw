@@ -11,6 +11,160 @@ import 'progress_store.dart';
 const Color kMasteredColor = Color(0xFF2E7D32); // green 800
 const Color kLearningColor = Color(0xFFF9A825); // amber 800
 
+/// A compact 3-step indicator of the learner's current phase, tappable for a
+/// short explainer of what each phase trains and what unlocks the next.
+class PhaseStepper extends StatelessWidget {
+  final LearningPhase phase;
+
+  /// Progress toward the NEXT phase, as "done of needed" (e.g. mastered items
+  /// toward the copy-behind gate), for the explainer. Null in the final phase.
+  final int? towardNextDone;
+  final int? towardNextNeeded;
+
+  const PhaseStepper({
+    super.key,
+    required this.phase,
+    this.towardNextDone,
+    this.towardNextNeeded,
+  });
+
+  static const _labels = {
+    LearningPhase.recognition: 'Recognition',
+    LearningPhase.copyBehind: 'Copy behind',
+    LearningPhase.onTheAir: 'On the air',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final current = phase.index;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showExplainer(context),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          children: [
+            for (var i = 0; i < LearningPhase.values.length; i++) ...[
+              _dot(theme, done: i < current, active: i == current),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  _labels[LearningPhase.values[i]]!,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: i == current
+                        ? theme.colorScheme.primary
+                        : theme.hintColor,
+                    fontWeight:
+                        i == current ? FontWeight.w700 : FontWeight.w400,
+                  ),
+                ),
+              ),
+              if (i < LearningPhase.values.length - 1)
+                Icon(Icons.chevron_right, size: 16, color: theme.dividerColor),
+            ],
+            const SizedBox(width: 2),
+            Icon(Icons.info_outline, size: 15, color: theme.hintColor),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dot(ThemeData theme, {required bool done, required bool active}) {
+    final color = done || active ? theme.colorScheme.primary : theme.dividerColor;
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: active ? color : (done ? color : Colors.transparent),
+        border: Border.all(color: color, width: 1.5),
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+
+  void _showExplainer(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget row(LearningPhase p, String what) {
+      final isCurrent = p == phase;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(isCurrent ? Icons.radio_button_checked : Icons.circle_outlined,
+                    size: 16,
+                    color: isCurrent ? theme.colorScheme.primary : theme.hintColor),
+                const SizedBox(width: 6),
+                Text(_labels[p]!,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: isCurrent ? theme.colorScheme.primary : null)),
+                if (isCurrent) ...[
+                  const SizedBox(width: 6),
+                  Text('you are here',
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: theme.colorScheme.primary)),
+                ],
+              ],
+            ),
+            const SizedBox(height: 2),
+            Padding(
+              padding: const EdgeInsets.only(left: 22),
+              child: Text(what, style: theme.textTheme.bodySmall),
+            ),
+          ],
+        ),
+      );
+    }
+
+    String nextLine() {
+      switch (phase) {
+        case LearningPhase.recognition:
+          final d = towardNextDone ?? 0, n = towardNextNeeded ?? 0;
+          return 'Next: master $n items to begin copy-behind ($d/$n so far).';
+        case LearningPhase.copyBehind:
+          return 'Next: finish the built-in curriculum to reach on-the-air practice.';
+        case LearningPhase.onTheAir:
+          return 'You\'ve reached the final phase — keep sharpening on endless real material.';
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your learning phases'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            row(LearningPhase.recognition,
+                'Learn to recognise each sound instantly. Characters play at full '
+                'speed; the app quietly speeds you up as you get fast and accurate.'),
+            row(LearningPhase.copyBehind,
+                'Once recognition is solid, a short silent delay is added so you '
+                'learn to hold the sound in your head and "copy behind" — real head copy.'),
+            row(LearningPhase.onTheAir,
+                'The built-in material is done. The app generates endless random '
+                'callsigns and realistic exchanges so you stay sharp.'),
+            const Divider(),
+            Text(nextLine(),
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.primary)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+}
+
 /// A GitHub-style activity calendar: weekdays as rows (Sun→Sat, top→bottom),
 /// weeks as columns (oldest→newest, left→right). Each cell is shaded by how
 /// much practice happened that day. [days] is a contiguous oldest→newest run.

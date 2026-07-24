@@ -78,8 +78,11 @@ class SessionSummary {
 }
 
 /// Starting effective (Farnsworth) speed for a brand-new learner. Character
-/// speed is fixed (see [kFixedActualWpm]); only this ramps up.
-const int kStartEffectiveWpm = 12;
+/// speed is fixed (see [kFixedActualWpm]); only this ramps up. Set to 15 (not a
+/// lower value) so the Farnsworth padding between letters is modest from the
+/// outset — much closer to real on-air spacing — then it tightens to 20 (no
+/// padding) as recognition gets fast and accurate.
+const int kStartEffectiveWpm = 15;
 
 /// Fixed character speed for Copy mode — learn at target speed from day one
 /// (Koch). Only the effective/Farnsworth speed adapts.
@@ -103,13 +106,15 @@ class AdaptiveProgress {
   /// grows as an advanced retention skill. See adaptBufferMs.
   int bufferMs;
 
-  /// Recent per-item TYPED recognition times (ms), newest last, capped. Drives
-  /// the adaptive "too slow" bar in typed mode.
+  /// Recent per-item recognition times (ms), newest last, capped. Drives the
+  /// adaptive "too slow" bar.
   final List<int> recentTypedMs;
 
-  /// Recent per-item PAPER copy times (ms) — audio-end → Done tap, newest last,
-  /// capped. Drives the adaptive bar in paper mode (separate from typed).
-  final List<int> recentPaperMs;
+  /// Per-character rolling correctness observed inside any item (from typed
+  /// per-character diffs). char → recent bools. Drives weak-char reinforcement
+  /// and confusable practice from mistakes made INSIDE words, not just solo
+  /// characters. See SrsScheduler.charRecent.
+  final Map<String, List<bool>> charRecent;
 
   AdaptiveProgress({
     Map<String, ItemState>? itemStates,
@@ -118,11 +123,11 @@ class AdaptiveProgress {
     this.effectiveWpm = kStartEffectiveWpm,
     this.bufferMs = 0,
     List<int>? recentTypedMs,
-    List<int>? recentPaperMs,
+    Map<String, List<bool>>? charRecent,
   })  : itemStates = itemStates ?? <String, ItemState>{},
         sessions = sessions ?? <SessionSummary>[],
         recentTypedMs = recentTypedMs ?? <int>[],
-        recentPaperMs = recentPaperMs ?? <int>[];
+        charRecent = charRecent ?? <String, List<bool>>{};
 
   /// Appends a per-item time to a capped rolling history (keeps the last 30).
   static void pushCapped(List<int> history, int ms) {
@@ -138,13 +143,14 @@ class AdaptiveProgress {
         'effectiveWpm': effectiveWpm,
         'bufferMs': bufferMs,
         'recentTypedMs': recentTypedMs,
-        'recentPaperMs': recentPaperMs,
+        'charRecent': charRecent,
         'itemStates': itemStates.map((k, v) => MapEntry(k, v.toJson())),
         'sessions': sessions.map((s) => s.toJson()).toList(),
       };
 
   factory AdaptiveProgress.fromJson(Map<String, dynamic> j) {
     final rawStates = (j['itemStates'] as Map?) ?? {};
+    final rawChar = (j['charRecent'] as Map?) ?? {};
     return AdaptiveProgress(
       totalReps: (j['totalReps'] as num?)?.toInt() ?? 0,
       effectiveWpm: (j['effectiveWpm'] as num?)?.toInt() ?? kStartEffectiveWpm,
@@ -153,10 +159,8 @@ class AdaptiveProgress {
               ?.map((e) => (e as num).toInt())
               .toList() ??
           <int>[],
-      recentPaperMs: (j['recentPaperMs'] as List?)
-              ?.map((e) => (e as num).toInt())
-              .toList() ??
-          <int>[],
+      charRecent: rawChar.map((k, v) => MapEntry(
+          k as String, (v as List).map((e) => e as bool).toList())),
       itemStates: rawStates.map(
         (k, v) => MapEntry(
             k as String, ItemState.fromJson((v as Map).cast<String, dynamic>())),

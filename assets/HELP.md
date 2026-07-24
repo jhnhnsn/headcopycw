@@ -27,14 +27,9 @@ Source: https://github.com/jhnhnsn/cwtrainer
 - **Your own callsign.** It's the first thing you copy on the air, so — once set — the app teaches it early and mixes it into realistic exchanges.
 - **It never runs out.** After the built-in material — alphabet, prosigns, exchanges, numbers-in-context, callsigns, and common words — the app keeps going, generating an endless stream of fresh random callsigns and short QSO exchanges (`W1ABC DE {your call} 5NN K`) so you stay sharp.
 
-## Copy on paper
-
-Prefer to copy on paper the traditional way? Turn on **Settings → Copy on paper**. Then a session is: hear it → write it on paper → tap **Done** → next, with nothing revealed. At the end you type in everything you wrote and the app scores it. Paper practice keeps items in rotation and advances them on accuracy, but building **instant recognition** (which unlocks new material and raises your speed) is best done in the normal typed mode, since that's where the app can measure how fast you recognize each sound.
-
 ## Settings
 
 - **Your Callsign** — trained early and woven into generated exchanges.
-- **Copy on paper** — the no-typing paper workflow described above.
 - **Pitch** — the tone frequency, for your comfort/hearing.
 - **Session Length** — minutes per session (0 = unlimited).
 - **Reset** — reset settings to defaults, or wipe all Copy progress and start fresh.

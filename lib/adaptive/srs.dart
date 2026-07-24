@@ -15,8 +15,19 @@ library;
 
 import 'dart:math';
 
-/// Accuracy an item's rolling average must reach to be considered "mastered".
+import 'confusables.dart';
+
+/// Accuracy an item's rolling average must reach to be considered "mastered"
+/// (used to satisfy a word/phrase's character prerequisites). Kept strict —
+/// you want the letters of a word genuinely solid before hearing the word.
 const double kAccuracyGate = 0.90;
+
+/// Accuracy gate for *promoting* the learner to a new item — deliberately lower
+/// than mastery. Research (the "85% rule" for perceptual learning; modern SRS
+/// retention optima ~80–90%) indicates the classic Koch 90% promotion bar is
+/// conservative and slows progression without benefit. This is the "add the
+/// next item" knob, separate from the "this word's letters are solid" knob.
+const double kPromotionGate = 0.85;
 
 /// Response-time ceiling (ms, audio-end → submit) for an item to count as
 /// instantly recognised. ~550ms follows the CWops/MorseCode.World ICR
@@ -164,12 +175,17 @@ const double kDefaultIntroduceProbability = 0.25;
 
 /// Weighting knobs for [SrsScheduler.pickNext] and gating.
 class SrsConfig {
+  /// Mastery gate (satisfying a word's character prerequisites).
   final double accuracyGate;
+
+  /// Promotion gate (adding the next new item) — lower than mastery.
+  final double promotionGate;
   final int icrLatencyMs;
   final double introduceProbability;
 
   const SrsConfig({
     this.accuracyGate = kAccuracyGate,
+    this.promotionGate = kPromotionGate,
     this.icrLatencyMs = kIcrLatencyMs,
     this.introduceProbability = kDefaultIntroduceProbability,
   });
@@ -277,6 +293,13 @@ class SrsScheduler {
   final SrsConfig config;
   final Map<String, ItemState> states;
 
+  /// Per-character rolling correctness observed *inside any item* (from typed
+  /// per-character diffs). Char → recent bools (newest last, capped). This is
+  /// how a character fumbled inside a word (e.g. the S in "SOS") still marks
+  /// that character weak and drives confusable practice — separate from the
+  /// whole-item [states].
+  final Map<String, List<bool>> charRecent;
+
   /// Monotonic count of presentations this run; drives due scheduling.
   int repCounter;
 
@@ -285,13 +308,39 @@ class SrsScheduler {
   SrsScheduler({
     this.config = const SrsConfig(),
     Map<String, ItemState>? states,
+    Map<String, List<bool>>? charRecent,
     this.repCounter = 0,
     Random? rng,
   })  : states = states ?? <String, ItemState>{},
+        charRecent = charRecent ?? <String, List<bool>>{},
         _rng = rng ?? Random();
 
   ItemState _stateFor(String id) =>
       states.putIfAbsent(id, () => ItemState(id: id));
+
+  /// Rolling accuracy for a single character across all items (1.0 if unseen).
+  double charAccuracy(String ch) {
+    final r = charRecent[ch];
+    if (r == null || r.isEmpty) return 1.0;
+    return r.where((c) => c).length / r.length;
+  }
+
+  /// Records per-character outcomes from a typed answer vs. the target, so a
+  /// character fumbled inside a word feeds weak-char reinforcement and
+  /// confusable practice. Position-aligned (the common case); when the typed
+  /// answer is a different length, only the overlapping positions are scored.
+  /// Both strings should already be normalised (uppercase, single-spaced).
+  void recordCharOutcomes(String target, String typed) {
+    final t = target.replaceAll(' ', '');
+    final u = typed.replaceAll(' ', '');
+    for (var i = 0; i < t.length; i++) {
+      final ch = t[i];
+      if (!kConfusableScorable.contains(ch)) continue;
+      final got = i < u.length ? u[i] : '';
+      final correct = got == ch;
+      _pushCapped(charRecent.putIfAbsent(ch, () => <bool>[]), correct);
+    }
+  }
 
   /// Grade a presentation of [id]. [correct] is the accuracy verdict; a correct
   /// answer that beats the ICR latency gate is [countedAsRecognised] and
@@ -328,20 +377,39 @@ class SrsScheduler {
     );
   }
 
-  /// Whether the next locked item may be introduced now: overall recent
-  /// performance must be healthy (in/above the desirable-difficulty band) so we
-  /// don't pile new material onto a struggling learner.
+  /// Minimum reps a freshly-introduced item needs before another new item may
+  /// be introduced — enforces "one new thing at a time, let it settle first"
+  /// (Koch). Prevents the flood where high overall accuracy (inflated by many
+  /// mastered items) opens the floodgates to several new items at once.
+  static const int kSettleReps = 6;
+
+  /// Whether the next locked item may be introduced now. Requires BOTH:
+  ///  1. overall recent accuracy is healthy (don't pile onto a struggler), and
+  ///  2. the most-recently-introduced item has "settled" — enough reps under it
+  ///     and not struggling — so new material arrives one-at-a-time, not in a
+  ///     burst.
   bool canIntroduceNew() {
     final active = states.values.where((s) => s.introduced).toList();
     if (active.isEmpty) return true; // nothing yet — always seed the first item
-    // Aggregate accuracy across all recently-seen items.
+
+    // (1) Overall accuracy gate — use the (lower) promotion threshold so we
+    // don't over-drill before adding the next item.
     var hits = 0, total = 0;
     for (final s in active) {
       hits += s.recentCorrect.where((c) => c).length;
       total += s.recentCorrect.length;
     }
-    if (total == 0) return true;
-    return hits / total >= config.accuracyGate;
+    if (total > 0 && hits / total < config.promotionGate) return false;
+
+    // (2) "Settling" gate: the least-practised introduced item must have had
+    // real practice (>= kSettleReps) and not be struggling — so new material
+    // arrives one at a time, not in a burst.
+    final youngest =
+        active.reduce((a, b) => a.reps <= b.reps ? a : b);
+    if (youngest.reps < kSettleReps) return false;
+    if (youngest.accuracy < config.promotionGate - 0.15) return false; // ~<70%
+
+    return true;
   }
 
   /// True if every prerequisite id is mastered (both gates). Missing/never-seen
@@ -387,7 +455,20 @@ class SrsScheduler {
       return nextLockedItem?.id;
     }
 
-    // 2. Weighted pick among introduced items, favouring due + weak items.
+    // Characters the learner is currently getting WRONG — measured per-character
+    // across ALL items (so a fumble inside a word counts too, not just a solo
+    // character). Their confusable neighbours get boosted so we interleave
+    // discrimination practice on the exact pairs being mixed up.
+    final confusablesToBoost = <String>{};
+    for (final ch in charRecent.keys) {
+      if ((charRecent[ch]?.length ?? 0) >= 2 &&
+          charAccuracy(ch) < config.promotionGate) {
+        confusablesToBoost.addAll(confusablesOf(ch));
+      }
+    }
+
+    // 2. Weighted pick among introduced items, favouring due + weak items, and
+    // boosting confusable neighbours of items being missed.
     String? best;
     double bestWeight = -1;
     for (final id in introducedIds) {
@@ -397,8 +478,12 @@ class SrsScheduler {
       // still allow the most-overdue (least-negative) so we never stall.
       final dueBonus = overdue >= 0 ? 1.0 + overdue : 1.0 / (1 - overdue);
       final weakness = s == null ? 1.0 : (1.0 - s.accuracy);
+      final confusableBonus = confusablesToBoost.contains(id) ? 1.6 : 1.0;
       // Small jitter breaks ties without an external clock.
-      final weight = dueBonus * (0.5 + weakness) * (0.85 + 0.3 * _rng.nextDouble());
+      final weight = dueBonus *
+          (0.5 + weakness) *
+          confusableBonus *
+          (0.85 + 0.3 * _rng.nextDouble());
       if (weight > bestWeight) {
         bestWeight = weight;
         best = id;

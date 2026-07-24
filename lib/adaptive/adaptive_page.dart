@@ -8,7 +8,6 @@ import 'package:flutter/services.dart';
 import '../morse_engine.dart';
 import 'curriculum.dart';
 import 'curriculum_provider.dart';
-import 'cw_keyboard.dart';
 import 'generator.dart';
 import 'progress_page.dart';
 import 'progress_stats.dart';
@@ -27,28 +26,15 @@ class AdaptiveSettings {
   /// The learner's own callsign (uppercase, encodable), or '' if unset.
   final String callsign;
 
-  /// When true, run "copy on paper": no typing during the session (hear →
-  /// write → Done), then score everything at the end.
-  final bool paperMode;
-
   const AdaptiveSettings({
     required this.frequencyHz,
     required this.sessionLengthMinutes,
     this.callsign = '',
-    this.paperMode = false,
   });
 }
 
 /// Lifecycle phases of one presentation.
-enum _Phase {
-  idle,
-  playing,
-  buffering,
-  awaitingInput, // typed mode: CW keyboard is up
-  paperCopy, // paper mode: write on paper, then tap Done
-  paperScoring, // paper mode: enter what you wrote to score at session end
-  revealed,
-}
+enum _Phase { idle, playing, buffering, awaitingInput, revealed }
 
 /// The adaptive "Copy" mode. Plays a curriculum item, waits a buffer beat, lets
 /// the learner type what they heard, scores accuracy + latency, reveals, and
@@ -84,6 +70,12 @@ class AdaptivePageState extends State<AdaptivePage> {
   final AudioPlayer _player = AudioPlayer();
   final TextEditingController _answerController = TextEditingController();
   final FocusNode _answerFocus = FocusNode();
+
+  /// Focus node for the page-level key handler (Enter to advance the reveal
+  /// screen). The answer TextField steals focus during input, so we explicitly
+  /// return focus here when the reveal appears — otherwise Enter is swallowed.
+  /// Matters on desktop/web especially.
+  final FocusNode _pageFocus = FocusNode();
 
   late SrsScheduler _scheduler;
   ProgressStore? _store;
@@ -137,13 +129,6 @@ class AdaptivePageState extends State<AdaptivePage> {
   int _sessionBufferedCorrect = 0;
   bool _currentBuffered = false;
 
-  /// Paper mode: items copied this session (in order), each with the copy-time
-  /// (audio-end → Done). Scored at session end.
-  final List<({CurriculumItem item, int copyMs})> _paperItems = [];
-
-  /// Paper scoring: one text controller per copied item (learner's entry).
-  final List<TextEditingController> _paperEntries = [];
-
   /// Change in adaptive effective-WPM applied at the last session end (+1/0/-1),
   /// shown in the recap.
   int _lastSpeedDelta = 0;
@@ -187,6 +172,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     }
     _scheduler = SrsScheduler(
       states: _progress.itemStates,
+      charRecent: _progress.charRecent,
       repCounter: _progress.totalReps,
     );
     if (mounted) setState(() => _loaded = true);
@@ -201,9 +187,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     _elapsedTimer?.cancel();
     _answerController.dispose();
     _answerFocus.dispose();
-    for (final c in _paperEntries) {
-      c.dispose();
-    }
+    _pageFocus.dispose();
     _player.dispose();
     // Best-effort final flush — skipped if a reset just wiped the file, so we
     // don't resurrect deleted progress from this outgoing instance.
@@ -272,7 +256,6 @@ class AdaptivePageState extends State<AdaptivePage> {
       _sessionLatencies.clear();
       _sessionUnlockedIds.clear();
       _generatedThisSession.clear();
-      _paperItems.clear();
       _sessionStart = widget.now();
       _remainingSeconds = widget.settings.sessionLengthMinutes * 60;
       _current = null;
@@ -305,13 +288,6 @@ class AdaptivePageState extends State<AdaptivePage> {
     _latencyWatch.stop();
     _latencyWatch.reset();
 
-    // Paper mode: don't finalize yet — the learner still has to enter what they
-    // wrote so we can score it. Move to the scoring screen.
-    if (widget.settings.paperMode && _paperItems.isNotEmpty) {
-      _openPaperScoring();
-      return;
-    }
-
     await _finalizeSession();
     if (!mounted) return;
     setState(() {
@@ -321,8 +297,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     if (_sessionSeen > 0) _showRecap();
   }
 
-  /// Records the session summary and adapts speed from the tallies gathered so
-  /// far (typed mode fills these live; paper mode fills them during scoring).
+  /// Records the session summary and adapts speed + copy-behind buffer.
   Future<void> _finalizeSession() async {
     if (_sessionSeen == 0) return;
     final sorted = [..._sessionLatencies]..sort();
@@ -340,12 +315,10 @@ class AdaptivePageState extends State<AdaptivePage> {
       medianLatencyMs: median,
       unlockedIds: List.of(_sessionUnlockedIds),
     ));
-    // Speed only ramps on TYPED recognition (writing ≠ recognizing). In paper
-    // mode _sessionLatencies stays empty, so median is 0 and the ramp holds.
     final prevWpm = _progress.effectiveWpm;
     _progress.effectiveWpm = adaptEffectiveWpm(
       current: _progress.effectiveWpm,
-      itemsSeen: widget.settings.paperMode ? 0 : _sessionSeen,
+      itemsSeen: _sessionSeen,
       accuracy: accuracy,
       medianLatencyMs: median,
     );
@@ -367,51 +340,23 @@ class AdaptivePageState extends State<AdaptivePage> {
     await _persist(immediate: true);
   }
 
-  // ---- Paper-mode end-of-session scoring ----
-
-  void _openPaperScoring() {
-    _sessionTimer?.cancel();
-    _countdownTimer?.cancel();
-    for (final c in _paperEntries) {
-      c.dispose();
-    }
-    _paperEntries
-      ..clear()
-      ..addAll(List.generate(_paperItems.length, (_) => TextEditingController()));
-    setState(() => _phase = _Phase.paperScoring);
-  }
-
-  /// Grades every paper entry against what was played, feeds the SRS, then
-  /// finalizes and shows the recap.
-  Future<void> _scorePaper() async {
-    // Whole paper session shared one buffer value; if it was active, every
-    // scored item counts toward the buffer's retention signal.
-    final buffered = _progress.bufferMs > 0;
-    for (var i = 0; i < _paperItems.length; i++) {
-      final entry = _paperItems[i];
-      final typed = _normalize(_paperEntries[i].text);
-      final target = _normalize(entry.item.text);
-      final correct = typed == target;
-      // Copy-time is the latency; it never satisfies the ICR gate (writing is
-      // slower), so paper advances items on accuracy but not on speed.
-      _scheduler.grade(id: entry.item.id, correct: correct, latencyMs: entry.copyMs);
-      _sessionSeen++;
-      if (correct) _sessionCorrect++;
-      if (buffered && correct) _sessionBufferedCorrect++;
-    }
-    await _finalizeSession();
-    if (!mounted) return;
-    setState(() {
-      _running = false;
-      _phase = _Phase.idle;
-    });
-    _showRecap();
-  }
-
   void _showRecap() {
     final acc = _sessionSeen == 0 ? 0.0 : _sessionCorrect / _sessionSeen;
-    final sorted = [..._sessionLatencies]..sort();
-    final median = sorted.isEmpty ? 0 : sorted[sorted.length ~/ 2];
+    final times = [..._sessionLatencies]..sort();
+    final median = times.isEmpty ? 0 : times[times.length ~/ 2];
+
+    // Dosage nudge (research: ~30 min/day is plenty; short & frequent wins).
+    final todaySecs = secondsPracticedToday(_progress.sessions, widget.now());
+    final theme = Theme.of(context);
+    final Widget? nudge = todaySecs >= kDailyDoseTargetSeconds
+        ? _recapNudge(theme, Icons.nightlight_round,
+            'You\'ve practised ${(todaySecs / 60).round()} min today — nicely done. '
+            'A fresh session tomorrow beats more now; that\'s when your brain '
+            'locks it in.')
+        : _recapNudge(theme, Icons.schedule,
+            'Tip: a few short sessions spread through the day beat one long one. '
+            'Come back in a bit for another.');
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -426,6 +371,7 @@ class AdaptivePageState extends State<AdaptivePage> {
             _recapRow('New items unlocked', '${_sessionUnlockedIds.length}'),
             _recapRow('Speed', '${_progress.effectiveWpm} WPM'
                 '${_lastSpeedDelta > 0 ? ' ↑' : _lastSpeedDelta < 0 ? ' ↓' : ''}'),
+            if (nudge != null) ...[const Divider(height: 20), nudge],
           ],
         ),
         actions: [
@@ -434,6 +380,19 @@ class AdaptivePageState extends State<AdaptivePage> {
       ),
     );
   }
+
+  Widget _recapNudge(ThemeData theme, IconData icon, String text) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.primary)),
+          ),
+        ],
+      );
 
   Widget _recapRow(String label, String value) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -538,8 +497,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     setState(() => _phase = _Phase.buffering);
     _bufferTimer = Timer(Duration(milliseconds: buffer), () {
       if (!mounted || !_running) return;
-      setState(() => _phase =
-          widget.settings.paperMode ? _Phase.paperCopy : _Phase.awaitingInput);
+      setState(() => _phase = _Phase.awaitingInput);
       _latencyWatch
         ..reset()
         ..start();
@@ -547,33 +505,17 @@ class AdaptivePageState extends State<AdaptivePage> {
     });
   }
 
-  /// Paper mode: learner has written the answer and tapped Done. Record the
-  /// copy-time, stash the item for end-of-session scoring, and move on — the
-  /// answer is never revealed mid-session.
-  void _onPaperDone() {
-    if (_phase != _Phase.paperCopy) return;
-    _latencyWatch.stop();
-    _stopElapsedBar();
-    final copyMs = _latencyWatch.elapsedMilliseconds;
-    final item = _current!;
-    _paperItems.add((item: item, copyMs: copyMs));
-    AdaptiveProgress.pushCapped(_progress.recentPaperMs, copyMs);
-    _presentNext();
-  }
-
   /// Starts the adaptive "too long" bar for the current item. The target is
-  /// personalised to the learner's own recent pace (typed vs. paper history)
-  /// rather than a fixed constant, so it tightens as they speed up.
+  /// personalised to the learner's own recent recognition pace, so it tightens
+  /// as they speed up.
   void _startElapsedBar() {
     final chars = (_current?.text ?? '').replaceAll(' ', '').length;
-    final paper = widget.settings.paperMode;
     _elapsedTargetMs = elapsedTargetMs(
-      history: paper ? _progress.recentPaperMs : _progress.recentTypedMs,
+      history: _progress.recentTypedMs,
       charCount: chars,
-      // Paper allows more time (writing is slower) and has no ICR floor.
-      margin: paper ? 1.5 : 1.7,
-      floorMs: paper ? 0 : kIcrLatencyMs,
-      fallbackPerCharMs: paper ? 1200 : kIcrLatencyMs,
+      margin: 1.7,
+      floorMs: kIcrLatencyMs,
+      fallbackPerCharMs: kIcrLatencyMs,
     );
     _elapsedWatch
       ..reset()
@@ -581,8 +523,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     _elapsedTimer?.cancel();
     // Tick ~30fps for a smooth bar; stop once we're a bit past target.
     _elapsedTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
-      if (!mounted ||
-          (_phase != _Phase.awaitingInput && _phase != _Phase.paperCopy)) {
+      if (!mounted || _phase != _Phase.awaitingInput) {
         return;
       }
       if (_elapsedWatch.elapsedMilliseconds > _elapsedTargetMs + 1500) {
@@ -626,23 +567,6 @@ class AdaptivePageState extends State<AdaptivePage> {
     }
   }
 
-  // ---- CW keyboard handlers (system keyboard is suppressed) ----
-
-  void _onCwKey(String ch) {
-    if (_phase != _Phase.awaitingInput) return;
-    _answerController.text = _answerController.text + ch;
-    _onAnswerChanged(_answerController.text);
-    setState(() {}); // reflect the new character
-  }
-
-  void _onCwBackspace() {
-    if (_phase != _Phase.awaitingInput) return;
-    final t = _answerController.text;
-    if (t.isEmpty) return;
-    _answerController.text = t.substring(0, t.length - 1);
-    setState(() {});
-  }
-
   void _submit() {
     if (_phase != _Phase.awaitingInput) return;
     _latencyWatch.stop();
@@ -656,6 +580,9 @@ class AdaptivePageState extends State<AdaptivePage> {
     final correct = typed == target;
 
     _scheduler.grade(id: item.id, correct: correct, latencyMs: latency);
+    // Per-character diff: a character fumbled inside a word feeds weak-char
+    // reinforcement + confusable practice, not just solo-character items.
+    _scheduler.recordCharOutcomes(target, typed);
     _sessionSeen++;
     if (correct) _sessionCorrect++;
     if (_currentBuffered && correct) _sessionBufferedCorrect++;
@@ -671,6 +598,9 @@ class AdaptivePageState extends State<AdaptivePage> {
       _lastCorrect = correct;
       _lastLatencyMs = latency;
     });
+    // The TextField had focus during input; return it to the page so Enter is
+    // captured on the reveal screen (advance to Next). Important on web/desktop.
+    _pageFocus.requestFocus();
   }
 
   void _continue() {
@@ -680,45 +610,17 @@ class AdaptivePageState extends State<AdaptivePage> {
 
   String _normalize(String s) => s.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
 
-  /// Set of characters accepted from a physical keyboard (matches the on-screen
-  /// CW keyboard's key set).
-  static final Set<String> _cwChars = {
-    ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split(''),
-    '.', ',', '/', '?', ' ',
-  };
-
-  /// Routes physical-keyboard input to the same handlers the on-screen CW
-  /// keyboard uses, so a hardware keyboard works while the CW keyboard is up.
+  /// Physical Enter advances the reveal screen (which has no text field of its
+  /// own). Typed input is handled natively by the answer TextField.
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
-
-    // Enter: submit during input, advance on the reveal screen.
-    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
-      if (_phase == _Phase.awaitingInput) {
-        _submit();
-        return KeyEventResult.handled;
-      }
-      if (_phase == _Phase.revealed) {
-        _continue();
-        return KeyEventResult.handled;
-      }
-      return KeyEventResult.ignored;
-    }
-
-    if (_phase != _Phase.awaitingInput) return KeyEventResult.ignored;
-
-    if (key == LogicalKeyboardKey.backspace) {
-      _onCwBackspace();
-      return KeyEventResult.handled;
-    }
-
-    // Character keys (uppercased, only if it's a valid CW glyph).
-    final ch = event.character?.toUpperCase();
-    if (ch != null && ch.length == 1 && _cwChars.contains(ch)) {
-      _onCwKey(ch);
+    if (_phase == _Phase.revealed &&
+        (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter)) {
+      _continue();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -733,6 +635,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     }
     final theme = Theme.of(context);
     return Focus(
+      focusNode: _pageFocus,
       autofocus: true,
       onKeyEvent: _handleKey,
       // SafeArea keeps the Start button clear of the bottom home indicator.
@@ -770,100 +673,11 @@ class AdaptivePageState extends State<AdaptivePage> {
         return _centered(container, theme, icon: Icons.hourglass_top, label: 'Hold it…');
       case _Phase.awaitingInput:
         return _buildInput(container, theme);
-      case _Phase.paperCopy:
-        return _buildPaperCopy(container, theme);
-      case _Phase.paperScoring:
-        return _buildPaperScoring(container, theme);
       case _Phase.revealed:
         return _buildReveal(container, theme);
       case _Phase.idle:
         return _centered(container, theme, icon: Icons.more_horiz, label: '');
     }
-  }
-
-  Widget _buildPaperCopy(BoxDecoration d, ThemeData theme) {
-    return Container(
-      decoration: d,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.edit_note, size: 48, color: theme.hintColor),
-          const SizedBox(height: 12),
-          Text('Write what you heard', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text('on paper — you\'ll enter it at the end',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor)),
-          const SizedBox(height: 20),
-          _buildElapsedBar(theme),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: _onPaperDone,
-            icon: const Icon(Icons.check),
-            label: const Text('Done'),
-            style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPaperScoring(BoxDecoration d, ThemeData theme) {
-    return Container(
-      decoration: d,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Enter what you wrote', style: theme.textTheme.titleMedium,
-              textAlign: TextAlign.center),
-          const SizedBox(height: 4),
-          Text('Type each item from your paper, then score.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor)),
-          const SizedBox(height: 12),
-          Expanded(
-            child: ListView.separated(
-              itemCount: _paperItems.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, i) => Row(
-                children: [
-                  SizedBox(
-                    width: 28,
-                    child: Text('${i + 1}',
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: theme.hintColor)),
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _paperEntries[i],
-                      textCapitalization: TextCapitalization.characters,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        border: const OutlineInputBorder(),
-                        hintText: 'item ${i + 1}',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: _scorePaper,
-            icon: const Icon(Icons.grading),
-            label: const Text('Score all'),
-            style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14)),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildIdleScreen(ThemeData theme) {
@@ -874,8 +688,11 @@ class AdaptivePageState extends State<AdaptivePage> {
     final items = itemProgressList(_scheduler, curriculum: _curriculum);
     final unlockedCount =
         items.where((p) => p.status != ItemStatus.locked).length;
+    final masteredCount =
+        items.where((p) => p.status == ItemStatus.mastered).length;
     final lockedColor = theme.disabledColor.withValues(alpha: 0.15);
     final nudge = milestoneNudge(_scheduler, _curriculum);
+    final phase = currentPhase(_scheduler, _curriculum);
 
     // No boxed "stage" on the home screen — content sits on the page so it
     // breathes. The framed stage is reserved for the in-session task.
@@ -885,9 +702,16 @@ class AdaptivePageState extends State<AdaptivePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ---- Progress: speed & accuracy trend (the skill that matters) ----
+            // ---- Progress: phase, then speed & accuracy trend ----
             _sectionLabel(theme, 'Progress', null),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
+            // Learning phase chips (tap for what each trains).
+            PhaseStepper(
+              phase: phase,
+              towardNextDone: masteredCount,
+              towardNextNeeded: kBufferGateMasteredItems,
+            ),
+            const SizedBox(height: 10),
             if (sessions.length >= 2)
               SessionTrendChart(sessions: sessions)
             else
@@ -1023,44 +847,48 @@ class AdaptivePageState extends State<AdaptivePage> {
   }
 
   Widget _buildInput(BoxDecoration d, ThemeData theme) {
-    final typed = _answerController.text;
     return Container(
       decoration: d,
-      padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
-      child: Column(
-        children: [
-          const Spacer(),
-          Text('What did you hear?', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 14),
-          // Read-only answer display (system keyboard suppressed; input comes
-          // from the CW keyboard below).
-          Container(
-            width: double.infinity,
-            constraints: const BoxConstraints(minHeight: 52),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              border: Border.all(color: theme.colorScheme.primary, width: 1.5),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              typed.isEmpty ? ' ' : typed,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w600,
-              ),
+      // Center the input when there's room; scroll it when the on-screen
+      // keyboard shrinks the stage so nothing gets clipped (small phones/web).
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight - 40),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('What did you hear?', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _answerController,
+                  focusNode: _answerFocus,
+                  autofocus: true,
+                  textAlign: TextAlign.center,
+                  textCapitalization: TextCapitalization.characters,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textInputAction: TextInputAction.done,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w600,
+                  ),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: 'type what you heard',
+                  ),
+                  onChanged: _onAnswerChanged,
+                  onSubmitted: (_) => _submit(),
+                ),
+                const SizedBox(height: 12),
+                _buildElapsedBar(theme),
+                const SizedBox(height: 16),
+                FilledButton(onPressed: _submit, child: const Text('Check')),
+              ],
             ),
           ),
-          const SizedBox(height: 10),
-          _buildElapsedBar(theme),
-          const Spacer(),
-          CwKeyboard(
-            onKey: _onCwKey,
-            onBackspace: _onCwBackspace,
-            onEnter: _submit,
-          ),
-        ],
+        ),
       ),
     );
   }

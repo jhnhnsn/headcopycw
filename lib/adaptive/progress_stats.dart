@@ -7,6 +7,60 @@ import 'curriculum.dart';
 import 'progress_store.dart';
 import 'srs.dart';
 
+/// The three learning phases the adaptive engine moves a learner through.
+enum LearningPhase {
+  /// Building instant recognition (ICR). Speed is ramping toward target; no
+  /// copy-behind delay yet. Ends once enough items are mastered.
+  recognition,
+
+  /// Copy behind. Recognition is established, so a growing silent delay trains
+  /// holding the sound in your head — the advanced head-copy skill.
+  copyBehind,
+
+  /// On the air. The built-in curriculum is complete; endless generated
+  /// callsigns and realistic exchanges keep you sharp.
+  onTheAir,
+}
+
+/// Determines the learner's current phase from progress state.
+/// - recognition → copyBehind once [kBufferGateMasteredItems] items are mastered
+///   (the same gate that turns on the copy-behind buffer).
+/// - copyBehind → onTheAir once every fixed-curriculum item is unlocked.
+LearningPhase currentPhase(SrsScheduler scheduler, List<CurriculumItem> curriculum) {
+  final cfg = scheduler.config;
+  final allUnlocked = curriculum.every(
+      (it) => scheduler.states[it.id]?.introduced ?? false);
+  if (allUnlocked) return LearningPhase.onTheAir;
+
+  final mastered = curriculum
+      .where((it) => scheduler.states[it.id]?.isMastered(cfg) ?? false)
+      .length;
+  if (mastered >= kBufferGateMasteredItems) return LearningPhase.copyBehind;
+  return LearningPhase.recognition;
+}
+
+/// Total seconds practiced on [today]'s calendar day, summed across sessions.
+/// Used for the soft daily-dose nudge — research says ~30 min/day is plenty and
+/// a fresh session the next day beats piling on more (spacing + sleep
+/// consolidation); this is a gentle limit, never a hard block.
+int secondsPracticedToday(List<SessionSummary> sessions, DateTime today) {
+  final d0 = DateTime(today.year, today.month, today.day);
+  final d1 = DateTime(today.year, today.month, today.day + 1);
+  var total = 0;
+  for (final s in sessions) {
+    final ended = DateTime.fromMillisecondsSinceEpoch(s.endedAtMs);
+    if (!ended.isBefore(d0) && ended.isBefore(d1)) {
+      total += s.durationSeconds;
+    }
+  }
+  return total;
+}
+
+/// Soft daily-dose target (seconds). Past this, the app gently suggests
+/// returning tomorrow. Research consensus (~30 min/day, CW-community + auditory
+/// perceptual-learning "less is more").
+const int kDailyDoseTargetSeconds = 30 * 60;
+
 /// One calendar day's practice activity, for the activity heatmap.
 class DayActivity {
   /// Local date at midnight (year/month/day only).

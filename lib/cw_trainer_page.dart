@@ -90,24 +90,19 @@ class CwTrainerSettings {
   /// The learner's own callsign (uppercase, encodable), or '' if unset. Used in
   /// the adaptive Copy curriculum and generated exchanges.
   String callsign = '';
-  /// Copy on paper: no typing during the session (hear → write → Done), then
-  /// enter everything at the end to score.
-  bool paperMode = false;
 
   static Future<CwTrainerSettings> load(SharedPreferences prefs) async {
     final hz = prefs.getInt('frequencyHz') ?? 700;
     return CwTrainerSettings()
       ..frequencyHz = _kValidTones.contains(hz) ? hz : 700
       ..sessionLengthMinutes = prefs.getInt('sessionLengthMinutes') ?? 5
-      ..callsign = prefs.getString('callsign') ?? ''
-      ..paperMode = prefs.getBool('paperMode') ?? false;
+      ..callsign = prefs.getString('callsign') ?? '';
   }
 
   static Future<void> save(SharedPreferences prefs, CwTrainerSettings s) async {
     await prefs.setInt('frequencyHz', s.frequencyHz);
     await prefs.setInt('sessionLengthMinutes', s.sessionLengthMinutes);
     await prefs.setString('callsign', s.callsign);
-    await prefs.setBool('paperMode', s.paperMode);
   }
 }
 
@@ -188,10 +183,9 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
       ),
     );
     if (s != null && mounted) {
-      // A changed callsign or paper-mode toggle changes the Copy loop, so
-      // rebuild the page to pick it up. Progress is preserved.
-      final rebuild = s.callsign != _settings.callsign ||
-          s.paperMode != _settings.paperMode;
+      // A changed callsign changes the Copy curriculum, so rebuild the page to
+      // pick it up. Progress is preserved.
+      final rebuild = s.callsign != _settings.callsign;
       final prefs = await SharedPreferences.getInstance();
       await CwTrainerSettings.save(prefs, s);
       setState(() {
@@ -220,7 +214,6 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
           frequencyHz: _settings.frequencyHz,
           sessionLengthMinutes: _settings.sessionLengthMinutes,
           callsign: _settings.callsign,
-          paperMode: _settings.paperMode,
         ),
       ),
     );
@@ -240,7 +233,6 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late double _pitchSlider;
   late int _sessionLengthMinutes;
-  late bool _paperMode;
   late TextEditingController _sessionLengthController;
   late TextEditingController _callsignController;
 
@@ -249,7 +241,6 @@ class _SettingsPageState extends State<SettingsPage> {
     super.initState();
     _pitchSlider = _kValidTones.indexOf(widget.settings.frequencyHz).clamp(0, _kValidTones.length - 1).toDouble();
     _sessionLengthMinutes = widget.settings.sessionLengthMinutes;
-    _paperMode = widget.settings.paperMode;
     _sessionLengthController = TextEditingController(text: '$_sessionLengthMinutes');
     _callsignController = TextEditingController(text: widget.settings.callsign);
   }
@@ -265,8 +256,7 @@ class _SettingsPageState extends State<SettingsPage> {
     Navigator.of(context).pop(CwTrainerSettings()
       ..frequencyHz = _kValidTones[_pitchSlider.round().clamp(0, _kValidTones.length - 1)]
       ..sessionLengthMinutes = _sessionLengthMinutes
-      ..callsign = normalizeCallsign(_callsignController.text)
-      ..paperMode = _paperMode);
+      ..callsign = normalizeCallsign(_callsignController.text));
   }
 
   @override
@@ -330,6 +320,27 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 8),
             Text('Session Length ($_sessionLengthMinutes min)', style: Theme.of(context).textTheme.labelLarge),
             const SizedBox(height: 4),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final m in const [5, 10, 15])
+                  ChoiceChip(
+                    label: Text('$m min'),
+                    selected: _sessionLengthMinutes == m,
+                    onSelected: (_) => setState(() {
+                      _sessionLengthMinutes = m;
+                      _sessionLengthController.text = '$m';
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Short and frequent wins — a few 5–10 min sessions beat one long one.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: Theme.of(context).hintColor),
+            ),
+            const SizedBox(height: 6),
             Row(
               children: [
                 IconButton.filled(
@@ -369,22 +380,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-
-            // Copy on paper toggle.
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _paperMode,
-              onChanged: (v) => setState(() => _paperMode = v),
-              title: const Text('Copy on paper'),
-              subtitle: Text(
-                'No typing during the session — hear it, write it, then enter '
-                'everything at the end to score.',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: Theme.of(context).hintColor),
-              ),
-            ),
-
             const SizedBox(height: 24),
             OutlinedButton(
               onPressed: () {
@@ -392,7 +387,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   _pitchSlider = _kValidTones.indexOf(700).toDouble();
                   _sessionLengthMinutes = 5;
                   _sessionLengthController.text = '5';
-                  _paperMode = false;
                 });
                 resetWindowSize();
               },

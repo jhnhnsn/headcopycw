@@ -49,19 +49,15 @@ void main() {
       expect(h.last, 39);
     });
 
-    test('typed/paper histories round-trip through JSON', () {
-      final p = AdaptiveProgress()
-        ..recentTypedMs.addAll([300, 400, 500])
-        ..recentPaperMs.addAll([1200, 1500]);
+    test('recognition-time history round-trips through JSON', () {
+      final p = AdaptiveProgress()..recentTypedMs.addAll([300, 400, 500]);
       final loaded = AdaptiveProgress.fromJson(p.toJson());
       expect(loaded.recentTypedMs, [300, 400, 500]);
-      expect(loaded.recentPaperMs, [1200, 1500]);
     });
 
-    test('old blobs default histories to empty', () {
+    test('old blobs default history to empty', () {
       final loaded = AdaptiveProgress.fromJson({'totalReps': 3});
       expect(loaded.recentTypedMs, isEmpty);
-      expect(loaded.recentPaperMs, isEmpty);
     });
   });
 }

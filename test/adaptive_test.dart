@@ -100,9 +100,9 @@ void main() {
 
     test('introduces a new item once prereqs are mastered', () {
       final sched = SrsScheduler(rng: Random(3));
-      // Master C and Q (fast + accurate).
+      // Master C and Q (fast + accurate, and enough reps to "settle").
       for (final id in ['C', 'Q']) {
-        for (var i = 0; i < 5; i++) {
+        for (var i = 0; i < 8; i++) {
           sched.grade(id: id, correct: true, latencyMs: 300);
         }
       }
@@ -115,6 +115,13 @@ void main() {
         if (pick == 'CQ') sawLocked = true;
       }
       expect(sawLocked, isTrue);
+    });
+
+    test('promotion gate is lower than the mastery gate (decoupled)', () {
+      // Research: the "add the next item" bar should be lower than "this word's
+      // letters are solid". Confirms the two knobs are separate.
+      expect(kPromotionGate, lessThan(kAccuracyGate));
+      expect(kPromotionGate, closeTo(0.85, 0.001));
     });
 
     test('does not introduce new material while overall accuracy is poor', () {
@@ -140,6 +147,46 @@ void main() {
       expect(sawLocked, isFalse, reason: 'accuracy gate should block new items');
     });
 
+    test('a brand-new item blocks further introductions until it settles', () {
+      final sched = SrsScheduler(rng: Random(9));
+      // A well-established base (plenty of reps, all correct).
+      for (final id in ['C', 'Q']) {
+        for (var i = 0; i < 8; i++) {
+          sched.grade(id: id, correct: true, latencyMs: 300);
+        }
+      }
+      // Introduce one new item with only a couple of reps (brand new).
+      for (var i = 0; i < 2; i++) {
+        sched.grade(id: 'D', correct: true, latencyMs: 300);
+      }
+      // Even though overall accuracy is perfect, the youngest item (D, 2 reps)
+      // hasn't settled → no further new item should be introduced yet.
+      var sawLocked = false;
+      for (var i = 0; i < 200; i++) {
+        final pick = sched.pickNext(
+          introducedIds: const ['C', 'Q', 'D'],
+          nextLockedItem: (id: 'E', prereqs: const []),
+        );
+        if (pick == 'E') sawLocked = true;
+      }
+      expect(sawLocked, isFalse,
+          reason: 'must not stack a new item on a brand-new one');
+
+      // Once D has enough reps under it, the next item may come.
+      for (var i = 0; i < 6; i++) {
+        sched.grade(id: 'D', correct: true, latencyMs: 300);
+      }
+      var sawAfter = false;
+      for (var i = 0; i < 200; i++) {
+        final pick = sched.pickNext(
+          introducedIds: const ['C', 'Q', 'D'],
+          nextLockedItem: (id: 'E', prereqs: const []),
+        );
+        if (pick == 'E') sawAfter = true;
+      }
+      expect(sawAfter, isTrue, reason: 'after settling, a new item is allowed');
+    });
+
     test('favours the weakest/most-overdue introduced item', () {
       final sched = SrsScheduler(rng: Random(7));
       // 'A' strong, 'B' weak. No new item available.
@@ -156,6 +203,33 @@ void main() {
         if (pick == 'B') bCount++;
       }
       expect(bCount, greaterThan(150), reason: 'weak item should dominate');
+    });
+
+    test('resurfaces the confusable neighbour of a missed character', () {
+      // S (...) is being missed occasionally; H (....) is its confusable
+      // neighbour, O is unrelated — both otherwise equally strong. H should be
+      // resurfaced more than O for discrimination practice. The per-character
+      // signal (recordCharOutcomes) is how the real app feeds this, including
+      // for solo characters.
+      final sched = SrsScheduler(rng: Random(11));
+      for (var i = 0; i < 8; i++) {
+        // Solo S copied wrong (~75%) → feeds the char signal below the gate.
+        sched.recordCharOutcomes('S', i < 6 ? 'S' : 'H');
+        sched.grade(id: 'H', correct: true, latencyMs: 300);
+        sched.grade(id: 'O', correct: true, latencyMs: 300);
+      }
+      expect(sched.charAccuracy('S'), lessThan(sched.config.promotionGate));
+      var hCount = 0, oCount = 0;
+      for (var i = 0; i < 1000; i++) {
+        final pick = sched.pickNext(
+            introducedIds: const ['H', 'O'], nextLockedItem: null);
+        if (pick == 'H') hCount++;
+        if (pick == 'O') oCount++;
+      }
+      // H (confusable with the missed S) should beat the equally-strong but
+      // unrelated O.
+      expect(hCount, greaterThan(oCount),
+          reason: 'confusable neighbour should be resurfaced over an unrelated item');
     });
   });
 
