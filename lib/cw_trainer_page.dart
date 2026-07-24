@@ -2,13 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart' show resetWindowSize;
 import 'morse_data.dart';
+import 'help_content.dart';
 import 'adaptive/adaptive_page.dart';
 
 /// Returns the assets directory path for user-editable files.
@@ -35,28 +35,6 @@ Future<Directory?> getAssetsDirectory() async {
   return assetsDir;
 }
 
-const _assetFiles = [
-  'HELP.md',
-];
-
-/// Copies bundled assets to the user's assets directory if they don't exist.
-Future<void> initializeUserAssets() async {
-  final assetsDir = await getAssetsDirectory();
-  if (assetsDir == null) return;
-
-  for (final fileName in _assetFiles) {
-    final file = File('${assetsDir.path}${Platform.pathSeparator}$fileName');
-    if (!await file.exists()) {
-      try {
-        final content = await rootBundle.loadString('assets/$fileName');
-        await file.writeAsString(content);
-      } catch (e) {
-        // Asset not found or write failed, skip
-      }
-    }
-  }
-}
-
 /// Deletes the adaptive "Copy" mode progress file, resetting all SRS state.
 Future<void> resetAdaptiveProgress() async {
   final assetsDir = await getAssetsDirectory();
@@ -66,18 +44,6 @@ Future<void> resetAdaptiveProgress() async {
   if (await file.exists()) await file.delete();
 }
 
-/// Loads a text file, preferring the user's copy if available.
-Future<String> loadAssetFile(String fileName) async {
-  final assetsDir = await getAssetsDirectory();
-  if (assetsDir != null) {
-    final file = File('${assetsDir.path}${Platform.pathSeparator}$fileName');
-    if (await file.exists()) {
-      return await file.readAsString();
-    }
-  }
-  // Fall back to bundled asset
-  return await rootBundle.loadString('assets/$fileName');
-}
 
 
 
@@ -138,7 +104,6 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   }
 
   Future<void> _initializeApp() async {
-    await initializeUserAssets();
     final dir = await getAssetsDirectory();
     if (mounted) setState(() => _storageDir = dir);
     _loadPreferences();
@@ -199,9 +164,11 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.teal,
-        foregroundColor: Colors.white,
-        title: const Text('Copy'),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: const Text('Head Copy CW Trainer'),
         actions: [
           IconButton(icon: const Icon(Icons.help_outline), tooltip: 'Help', onPressed: _openInfo),
           IconButton(icon: const Icon(Icons.settings), tooltip: 'Settings', onPressed: _openSetup),
@@ -501,10 +468,11 @@ class _WelcomePageState extends State<WelcomePage> {
                   _point(
                     theme,
                     icon: Icons.radio,
-                    title: 'Real contacts, from day one',
+                    title: 'Everything you learn is on-air',
                     body:
-                        'You train on the words, prosigns, and phrases you actually hear on '
-                        'the air — CQ, DE, 73, UR RST 599, HW CPY? — not endless random letters.',
+                        'You start with single letters and build toward real exchanges — but '
+                        'every step is something you actually hear on the air: CQ, DE, 73, '
+                        'UR RST 599, HW CPY? — never endless random letters.',
                   ),
                   _point(
                     theme,
@@ -519,12 +487,12 @@ class _WelcomePageState extends State<WelcomePage> {
                   _point(
                     theme,
                     icon: Icons.auto_stories,
-                    title: 'Whole words right away',
+                    title: 'Words, not weeks of letters',
                     body:
-                        'Instead of drilling single characters for weeks, you start hearing short '
-                        'words and phrases as single sound-shapes — the way skilled operators '
-                        'actually copy. Spaced repetition brings back what you miss and moves past '
-                        'what you know.',
+                        'You begin with single letters, but words and phrases arrive quickly — '
+                        'and you learn to hear them as single sound-shapes, the way skilled '
+                        'operators copy, instead of drilling the alphabet for weeks. Spaced '
+                        'repetition brings back what you miss and moves past what you know.',
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -617,28 +585,8 @@ class _WelcomePageState extends State<WelcomePage> {
   }
 }
 
-class InfoPage extends StatefulWidget {
+class InfoPage extends StatelessWidget {
   const InfoPage({super.key});
-
-  @override
-  State<InfoPage> createState() => _InfoPageState();
-}
-
-class _InfoPageState extends State<InfoPage> {
-  String _helpContent = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadHelp();
-  }
-
-  Future<void> _loadHelp() async {
-    final content = await loadAssetFile('HELP.md');
-    if (mounted) {
-      setState(() => _helpContent = content);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -648,13 +596,11 @@ class _InfoPageState extends State<InfoPage> {
       ),
       body: Column(
         children: [
-          Expanded(
-            child: _helpContent.isEmpty
-                ? const Center(child: CircularProgressIndicator())
-                : Markdown(
-                    data: _helpContent,
-                    padding: const EdgeInsets.all(24),
-                  ),
+          const Expanded(
+            child: Markdown(
+              data: kHelpMarkdown,
+              padding: EdgeInsets.all(24),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.all(24),
