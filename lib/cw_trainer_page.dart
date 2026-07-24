@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart' show resetWindowSize;
 import 'morse_data.dart';
 import 'help_content.dart';
+import 'headcopy_wordmark.dart';
 import 'adaptive/adaptive_page.dart';
 
 /// Returns the assets directory path for user-editable files.
@@ -168,7 +169,8 @@ class _CwTrainerPageState extends State<CwTrainerPage> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        title: const Text('Head Copy CW Trainer'),
+        toolbarHeight: 64,
+        title: const HeadCopyWordmark(height: 20),
         actions: [
           IconButton(icon: const Icon(Icons.help_outline), tooltip: 'Help', onPressed: _openInfo),
           IconButton(icon: const Icon(Icons.settings), tooltip: 'Settings', onPressed: _openSetup),
@@ -446,7 +448,10 @@ class _WelcomePageState extends State<WelcomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Head Copy CW Trainer')),
+      appBar: AppBar(
+        toolbarHeight: 64,
+        title: const HeadCopyWordmark(height: 20),
+      ),
       body: Column(
         children: [
           Expanded(
@@ -592,7 +597,8 @@ class InfoPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Head Copy CW Trainer'),
+        toolbarHeight: 64,
+        title: const HeadCopyWordmark(height: 20),
       ),
       body: Column(
         children: [
