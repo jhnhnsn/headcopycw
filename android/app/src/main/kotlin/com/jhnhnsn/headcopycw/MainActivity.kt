@@ -1,4 +1,4 @@
-package com.example.head_copy_cw_trainer
+package com.jhnhnsn.headcopycw
 
 import io.flutter.embedding.android.FlutterActivity
 

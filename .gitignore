@@ -42,6 +42,12 @@ pubspec.lock
 # CocoaPods lockfile generated on this machine (macOS platform folder)
 macos/Podfile.lock
 
+# Android release signing — NEVER commit the keystore or its passwords.
+android/key.properties
+**/*.jks
+**/*.keystore
+upload-keystore.jks
+
 # Symbolication related
 app.*.symbols
 
