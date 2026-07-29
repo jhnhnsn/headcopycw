@@ -1,134 +1,130 @@
-# Head Copy CW Trainer
-This is heavily inspired by the excellent CW trainer G4FON (https://www.g4fon.net/). I'm still learning CW myself and wanted something I could use on my phone. Much of the information in this help file is inspired by the info found on the G4FON site but modified for the layout of this app. 
+# Head Copy
 
-I'm releasing this as open source. Source should be available here: https://github.com/jhnhnsn/cwtrainer
+A CW (Morse code) trainer for learning to **copy in your head** — no paper, no lookup tables, no settings to fiddle with.
 
-Bugs, ideas, fixes are all welcome. Share and enjoy!
+You press Start, listen, and type what you heard. The app watches how fast and how accurately you answer, then adapts: it tightens the spacing as you get quick, introduces new material only when you've earned it, and eventually inserts a deliberate pause between the audio and the prompt so you learn to hold a transmission in your head and copy behind — the way real operators do.
 
-## Quick Start
+It runs on your phone, which is the point. Short daily sessions, wherever you are.
 
-### Get set up
-Get a pen (or pencil) and paper and start this app on Letters
+I'm releasing this as open source. Bugs, ideas, and fixes are all welcome. Share and enjoy!
 
-### Do a session
-1. Start with "Letters" with slider set to "2"
-2. The app will start playing the first 2 letters. Don't look at the screen.
-3. Write down the letters you hear on the paper until the session ends.
-4. At the end of the session compare what you wrote to the letters on the screen
-5. Once you're able to get around 90% accuracy consistently move the slider up to 3 letters.
+## Quick start
 
-## The Koch Method
+1. Press **Start**. (Set your callsign in **Settings** first if you like — it gets trained early and woven into generated exchanges.)
+2. Listen. **Don't look**; the answer stays hidden.
+3. After a brief pause, type what you heard and press **Enter** (or tap **Check**).
+4. See whether you were right and how fast you recognized it. Replay with **Hear it** if you want, then press **Next**.
+5. When your copy is solid *and* quick, the app quietly adds the next item and speeds you up.
 
-The Koch method is a proven technique for learning Morse code that builds reflexive responses to individual characters. Unlike traditional methods that start slow and gradually increase speed, the Koch method has you learn at your target speed from the very beginning.
+That's the whole loop. There is no lesson to pick and no difficulty to set.
 
-### How It Works
+## How this differs from Koch and from G4FON
 
-1. **Start at full speed** - Choose your target speed (e.g., 20 WPM) and stick with it. Don't start slow and build up.
+This started as a G4FON-style Koch trainer and is no longer one. The differences are the substance of the app, so they're worth stating plainly:
 
-2. **Begin with two characters** - Set the Letters slider to 2. For your first sessions, you'll only practice two characters (K and M in the standard Koch order).
+| | Classic Koch / G4FON | Head Copy |
+|---|---|---|
+| Material | Individual characters in a fixed Koch order (K, M, …), then random groups | Real on-air material from the first minute — `CQ`, `DE`, `73`, `UR RST 599`, `HW CPY?` — with characters introduced *just before* the words that need them |
+| Progression | You watch your own accuracy and move a "characters" slider by hand | The app promotes you automatically, per item, on measured accuracy **and** reaction time |
+| Speed | You choose actual and effective WPM | You never set a speed. Characters are always sent at full speed; only the spacing adapts |
+| Gating | Accuracy only (~90%) | Accuracy **and** instant recognition — a correct-but-slow answer doesn't advance you |
+| Review | Linear; once learned, always in the pool | Spaced repetition — misses come back sooner, mastered items later |
+| Response | Write it down on paper | Type it after the audio ends, with a growing silent buffer that trains copy-behind |
+| Modes | Letters / Groups / Words / QSO, chosen manually | One adaptive mode that moves through those stages on its own |
+| End of course | You finish the 40 characters | Never ends — a generator produces fresh callsigns and exchanges forever |
 
-3. **Practice for 5 minutes** - Press Start and copy the characters you hear. Write them down on paper or say them to yourself for head copy practice.
+The Koch insight that survives here is the important one: **learn at full character speed from the very beginning.** Everything built around it is different.
 
-4. **Check your accuracy** - After the session, compare what you copied with the text displayed on screen. Calculate your percentage of correct characters.
+## Why it works this way
 
-5. **Progress when ready** - When you achieve 90% accuracy or better, add the next character by increasing the Letters slider.
+- **Type, don't write.** Writing letter-by-letter while more code arrives keeps you decoding one character at a time. Answering after a short pause trains you to hold the sound in your head and *copy behind*.
+- **Real on-air material.** You practice the highest-value chunks you'll actually hear. Meaningful chunks stick far better than random letters, and experts hear common words as a single sound-shape.
+- **Speed, not just accuracy.** A new item won't unlock until you recognize the current material *instantly*. Gating on speed is what breaks the plateau that catches people who only chase accuracy.
+- **Adaptive pace.** Characters are always sent at full target speed. The app tightens the spacing as you get fast and accurate, and eases off if it hurts.
+- **Spaced repetition.** Weak spots get the practice; known material doesn't waste your time.
+- **Let misses go.** Take your best guess and move on. Getting the gist and continuing is exactly the skill head copy needs.
+- **Never runs out.** After the built-in material, the app generates an endless stream of fresh callsigns and exchanges (`W1ABC DE {your call} 5NN K`).
 
-6. **Repeat** - Your accuracy will temporarily drop as you learn each new character, but it will rise again. Continue until you've mastered all 40 characters.
+## The three phases
 
-### Why This Method Works
+The app shows your position on a three-step progress bar:
 
-- **Builds reflexes, not lookup tables** - By learning at full speed, you develop instant recognition rather than mentally translating each character.
-- **Constant positive reinforcement** - After mastering your first two characters at full speed, you know you can do it. Each new character is proof of progress.
-- **Efficient use of time** - You progress at your own pace, spending only the time needed for each character.
-- **No plateau frustration** - Unlike starting slow and hitting a wall at 10 WPM, you're already copying at your target speed.
+1. **Recognition** — building instant, reflexive recognition of characters and short on-air chunks.
+2. **Copy behind** — once 15 items are mastered, a silent pause appears between the audio and the prompt. It starts at 400 ms and grows to about 2 seconds (a word or two) as you stay accurate, easing off if you struggle.
+3. **On the air** — the fixed curriculum is exhausted and the generator takes over with endless callsigns and QSO exchanges.
 
-## Practice Modes
+## What it trains
 
-### Letters
-Practice individual characters using the Koch method. Use the Letters slider to control how many characters are in your practice set. Characters are introduced in the standard Koch order, starting with K and M.
+215 items, introduced in order but only once their prerequisite characters are mastered:
 
-### Groups
-Practice random groups of 2 to N characters (configurable with Max Group Size slider). Groups vary in length to ease the transition from random practice to real words. This mode is useful once you've learned several characters and want to practice copying continuous text.
+- **The contact basics** — prosigns and skeleton: `CQ`, `DE`, `K`, `R`, `TU`, `AR`, `SK`, `KN`, `BT`, `73`, `GM`, `OM`, `UR`, `HW`, `TNX`, `FB`, `599`, `5NN`, `RST`.
+- **Exchanges & numbers** — formulaic phrases in context: `UR RST 599`, `HW CPY?`, `MY NAME IS`, `QTH IS`, `TNX FER QSO`, `HPE CU AGN`, `PWR 100W`, `AGE 44`.
+- **Common words** — ~110 everyday English words, which also fills out the rest of the alphabet.
+- **Callsigns** — varied real-world prefixes (`W1ABC`, `VE3RM`, `DL4DX`, `JA1QRS`, `VK2ANT`) including portable `/P` forms.
 
-### Words
-Practice real words from three different word lists:
-- **CW** - Common amateur radio words and abbreviations
-- **English** - Common English words
-- **Learned** - Words composed only of characters you've already learned
+Your own callsign is injected early so you learn to recognize yourself being called.
 
-The Learned option is particularly useful as it lets you practice real words while still progressing through the Koch method.
+Curriculum order is never revealed in the UI — locked items collapse into a single "N more to unlock" chip, and milestone nudges deliberately avoid naming what's coming next, so you're never primed for an item before you hear it.
 
-### QSO
-Practice copying simulated amateur radio contacts (QSOs). These follow the format of real on-air exchanges, including callsigns, signal reports, names, locations, and common phrases. QSOs are played line by line with visual separators between different contacts.
+## Under the hood
+
+Details, if you're curious — none of this is exposed as a setting.
+
+- **Character speed is fixed at 20 WPM.** Only the effective (Farnsworth) speed adapts, starting at 15 WPM and moving between 8 and 20 in 1 WPM steps at the end of each session. It tightens at ≥90% accuracy with a median latency ≤550 ms, and eases below 75%.
+- **Mastery** requires at least 3 recent reps, ≥90% rolling accuracy, and a *median* recognition time ≤550 ms. Promotion to new material uses a slightly lower bar plus a settling rule, so you only ever learn one new thing at a time.
+- **Recognition time is measured at your first keystroke**, not at submit — typing speed is motor, not perceptual, and shouldn't count against you.
+- **Spaced repetition** uses six Leitner boxes measured in reps rather than wall-clock time. A correct-and-fast answer promotes; correct-but-slow holds; a miss drops you two boxes.
+- **Confusable pairs** are tracked per character. Fumble an `S` inside a word and its Morse neighbours (`I`, `H`, `U`) get preferentially resurfaced for discrimination practice.
+- **The elapsed bar** under the input adapts to your own recent response times. It's motivational only — it never auto-submits, and finishing a slow answer still counts.
+- **Daily dose** — past about 30 minutes in a day, the session recap gently suggests coming back tomorrow. It's a nudge, never a block.
+
+Progress persists to a JSON file in the app's documents directory, with debounced writes and an immediate flush at session end. A corrupt or missing file degrades to empty progress rather than crashing. (On web, progress is in-memory only and does not persist.)
 
 ## Settings
 
-Access settings by tapping the gear icon in the app bar.
+There are only three:
 
-### Speed Settings
+- **Your Callsign** — trained early and woven into generated exchanges.
+- **Pitch** — 350–1500 Hz in 25 Hz steps, default 700 Hz. For your comfort and hearing.
+- **Session Length** — 5 / 10 / 15 minutes or a custom value; 0 means unlimited. Default 5 minutes.
 
-- **Actual Speed** - The character speed in words per minute. This is how fast individual characters are sent. Default: 20 WPM.
+Plus **Reset to defaults** and **Reset Copy progress** (which wipes all learning history and starts you fresh).
 
-- **Effective Speed** - The overall speed including spacing. When lower than actual speed, extra space is added between elements. Default: 15 WPM.
+There is deliberately no speed, difficulty, or character-count setting. The app controls all of that adaptively.
 
-- **Effective Speed Mode**
-  - **Farnsworth** - Adds extra space between characters. Good for learning character recognition.
-  - **Wordsworth** - Adds extra space between words. Good for practicing word recognition and head copy.
+## Tips
 
-### Audio Settings
+- Practice a little, often. Short daily sessions beat occasional long ones.
+- Don't stare at the bar. Aim to answer the instant you recognize the sound: reflex, not deliberation.
+- Trust the pace. If new material isn't appearing yet, it's because you're not *quite* fast enough on what you have — and that's the point.
 
-- **Pitch** - The tone frequency in Hz. Adjustable from 350 Hz to 1500 Hz in 25 Hz increments. Default: 700 Hz. Choose a pitch that's comfortable for extended listening.
+## Building from source
 
-### Display Settings
-
-- **Display Delay** - How long to wait (in milliseconds) before showing the text after it's been sent. A longer delay encourages head copy rather than reading along. Default: 400 ms.
-
-### Session Settings
-
-- **Session Length** - Practice session duration in minutes. Set to 0 for unlimited sessions. Default: 5 minutes. Five-minute sessions are recommended for consistent practice and progress tracking.
-
-### Reset to Defaults
-
-Restores all settings to their default values.
-
-## Tips for Success
-
-1. **Practice regularly** - Short, frequent sessions are more effective than occasional long ones. Daily 5-minute sessions will produce steady progress.
-
-2. **Don't rush** - Only add a new character when you consistently achieve 90% accuracy with the current set. Patience here saves time in the long run.
-
-3. **Use head copy** - Say each character to yourself after hearing it rather than writing it down. This builds the reflexive recognition needed for real-time copying.
-
-4. **Some days are harder** - Your performance will vary day to day. Some characters will take longer to learn than others. This is normal and has nothing to do with intelligence.
-
-5. **Progress to words and QSOs** - Once you've learned the full character set, practice with the Words and QSO modes to develop real-world copying skills. Pay attention to callsigns, locations, and numbers.
-
-6. **Adjust the effective speed** - If you're struggling, try lowering the effective speed while keeping the actual speed the same. This gives you more time to process each character without changing how the characters sound.
-
-## Building from Source
-
-This is a Flutter application. To build:
+A Flutter app (Dart SDK 3.x). Android and iOS are the primary targets; desktop and web build but are less polished.
 
 ```bash
-# Get dependencies
 flutter pub get
-
-# Run in debug mode
 flutter run
 
-# Build for release
 flutter build apk        # Android
 flutter build ios        # iOS
-flutter build windows    # Windows
 flutter build macos      # macOS
+flutter build windows    # Windows
 flutter build linux      # Linux
 ```
 
+Run the tests:
+
+```bash
+flutter test
+```
+
+The test suite covers the adaptive engine fairly thoroughly — mastery and promotion gating, speed and buffer adaptation, spaced-repetition scheduling, simulated multi-session learner journeys, persistence across restarts, the endless generator, and the anti-priming rule that milestone nudges never name an upcoming item.
+
 ## License
 
-This project is open source. See the LICENSE file for details.
+Open source — see the LICENSE file for details.
 
-## Acknowledgments
+## Thanks
 
-- Koch method training approach heavily inspired by the G4FON Koch Trainer
-
+Thanks to G4FON (<https://www.g4fon.net/>), whose Windows trainer got many of us started and inspired this project. This app takes a different path — one adaptive, head-copy-first mode — but owes a lot to it.
