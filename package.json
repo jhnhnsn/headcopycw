@@ -1,0 +1,13 @@
+{
+  "name": "headcopy-web",
+  "private": true,
+  "description": "Builds the Flutter web app and deploys it to jhnhnsn.com/headcopycw on Cloudflare Workers.",
+  "scripts": {
+    "build": "flutter build web --release --base-href /headcopycw/ && rm -rf dist && mkdir dist && cp -R build/web dist/headcopycw",
+    "preview": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.153.0"
+  }
+}

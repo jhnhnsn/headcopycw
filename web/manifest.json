@@ -1,11 +1,11 @@
 {
-    "name": "CW Trainer",
-    "short_name": "CW Trainer",
+    "name": "HeadCopy",
+    "short_name": "HeadCopy",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "CW (Morse code) trainer using the Koch method.",
+    "background_color": "#F6F2EA",
+    "theme_color": "#F6F2EA",
+    "description": "Learn to copy Morse code in your head. Adaptive CW trainer.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

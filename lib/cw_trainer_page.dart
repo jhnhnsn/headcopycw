@@ -11,6 +11,7 @@ import 'morse_data.dart';
 import 'help_content.dart';
 import 'headcopy_wordmark.dart';
 import 'adaptive/adaptive_page.dart';
+import 'adaptive/progress_store.dart' show PrefsProgressBackend;
 
 /// Returns the assets directory path for user-editable files.
 /// On Windows/macOS/Linux, files are stored in application support directory.
@@ -38,6 +39,7 @@ Future<Directory?> getAssetsDirectory() async {
 
 /// Deletes the adaptive "Copy" mode progress file, resetting all SRS state.
 Future<void> resetAdaptiveProgress() async {
+  if (kIsWeb) return PrefsProgressBackend().delete();
   final assetsDir = await getAssetsDirectory();
   if (assetsDir == null) return;
   final file =

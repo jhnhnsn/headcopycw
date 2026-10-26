@@ -62,3 +62,7 @@ app.*.map.json
 # Build secrets and dist
 .build-secrets.json
 /dist/
+
+# Cloudflare deploy tooling
+node_modules/
+.wrangler/

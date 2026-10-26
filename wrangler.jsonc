@@ -1,0 +1,25 @@
+// Serves the Flutter web build as static assets at jhnhnsn.com/headcopycw on
+// Cloudflare Workers (free plan: static asset requests are free and
+// unmetered). No Worker script — there is no server side; progress lives in
+// the browser's localStorage.
+//
+//   npm run preview   # build + serve locally at http://localhost:8787/headcopycw/
+//   npm run deploy    # build + deploy
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "headcopy",
+  "compatibility_date": "2026-10-26",
+
+  // The rest of jhnhnsn.com is a Pages project (github.com/jhnhnsn/jhnhnsn.com)
+  // on the same hostname; a Worker route takes precedence over it, so this
+  // claims /headcopycw* and Pages keeps everything else. The trailing `*` is
+  // needed: `/headcopycw/*` misses a bare `/headcopycw`, and a pattern with no
+  // wildcard must match the whole URL, query string included. A missed request
+  // falls through to the Pages soft 404 (its landing page), not a real 404.
+  "routes": [{ "pattern": "jhnhnsn.com/headcopycw*", "zone_name": "jhnhnsn.com" }],
+
+  // The build is staged at dist/headcopycw/ (see package.json), so request
+  // paths map straight onto files with no prefix rewriting. The bare
+  // /headcopycw redirects to /headcopycw/, which stays on this route.
+  "assets": { "directory": "./dist" }
+}

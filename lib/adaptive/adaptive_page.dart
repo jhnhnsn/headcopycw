@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../audio/morse_player.dart';
 import '../morse_engine.dart';
 import 'curriculum.dart';
 import 'curriculum_provider.dart';
@@ -43,7 +44,8 @@ enum _Phase { idle, playing, buffering, awaitingInput, revealed }
 class AdaptivePage extends StatefulWidget {
   final AdaptiveSettings settings;
 
-  /// Directory for the progress JSON. Null on web → in-memory only.
+  /// Directory for the progress JSON. Null on web, where progress goes to
+  /// localStorage instead.
   final Directory? storageDir;
 
   /// Clock injection for testability; defaults to [DateTime.now].
@@ -67,7 +69,7 @@ class AdaptivePageState extends State<AdaptivePage> {
   /// just-deleted progress file when it disposes.
   static bool suppressNextDisposeFlush = false;
 
-  final AudioPlayer _player = AudioPlayer();
+  final MorsePlayer _player = MorsePlayer();
   final TextEditingController _answerController = TextEditingController();
   final FocusNode _answerFocus = FocusNode();
 
@@ -165,10 +167,10 @@ class AdaptivePageState extends State<AdaptivePage> {
   /// (Re)attaches the progress store from the current [widget.storageDir] and
   /// loads persisted progress into the scheduler. Safe to call more than once.
   Future<void> _attachStoreAndReload() async {
-    if (widget.storageDir != null) {
-      _store = ProgressStore(File(
-          '${widget.storageDir!.path}${Platform.pathSeparator}adaptive_progress.json'));
-      _progress = await _store!.load();
+    final store = _makeStore();
+    if (store != null) {
+      _store = store;
+      _progress = await store.load();
     }
     _scheduler = SrsScheduler(
       states: _progress.itemStates,
@@ -176,6 +178,16 @@ class AdaptivePageState extends State<AdaptivePage> {
       repCounter: _progress.totalReps,
     );
     if (mounted) setState(() => _loaded = true);
+  }
+
+  /// The progress store for this platform, or null while the native storage
+  /// dir is still resolving.
+  ProgressStore? _makeStore() {
+    if (kIsWeb) return ProgressStore.withBackend(PrefsProgressBackend());
+    final dir = widget.storageDir;
+    if (dir == null) return null;
+    return ProgressStore(
+        File('${dir.path}${Platform.pathSeparator}adaptive_progress.json'));
   }
 
   @override
@@ -224,10 +236,7 @@ class AdaptivePageState extends State<AdaptivePage> {
     // resolves asynchronously), attach it now so a save is never silently
     // dropped. Attach without reloading — we must keep the in-memory progress
     // we're about to write, not overwrite it with a stale/empty file.
-    if (_store == null && widget.storageDir != null) {
-      _store = ProgressStore(File(
-          '${widget.storageDir!.path}${Platform.pathSeparator}adaptive_progress.json'));
-    }
+    _store ??= _makeStore();
     if (_store == null) return;
     _progress.totalReps = _scheduler.repCounter;
     // Generated items are ephemeral drill — never persist their SRS state, so
@@ -468,21 +477,19 @@ class AdaptivePageState extends State<AdaptivePage> {
   Future<void> _playCurrent() async {
     final item = _current;
     if (item == null || !_running) return;
-    final wavPath = await renderMorseWavFile(
+    final wav = renderMorseWav(
       text: item.text,
       actualWpm: kFixedActualWpm,
       effectiveWpm: _progress.effectiveWpm,
       effectiveMode: EffectiveSpeedMode.farnsworth,
       frequencyHz: widget.settings.frequencyHz.toDouble(),
-      fileName: 'cw_adaptive.wav',
     );
     _completeSub?.cancel();
-    _completeSub = _player.onPlayerComplete.listen((_) {
+    _completeSub = _player.onComplete.listen((_) {
       if (!_running) return;
       _onAudioComplete();
     });
-    await _player.stop();
-    await _player.play(DeviceFileSource(wavPath));
+    await _player.play(wav, name: 'cw_adaptive');
   }
 
   void _onAudioComplete() {
@@ -547,17 +554,15 @@ class AdaptivePageState extends State<AdaptivePage> {
   Future<void> _playReplayOnly() async {
     final item = _current;
     if (item == null) return;
-    final wavPath = await renderMorseWavFile(
+    final wav = renderMorseWav(
       text: item.text,
       actualWpm: kFixedActualWpm,
       effectiveWpm: _progress.effectiveWpm,
       effectiveMode: EffectiveSpeedMode.farnsworth,
       frequencyHz: widget.settings.frequencyHz.toDouble(),
-      fileName: 'cw_adaptive_replay.wav',
     );
     // Use a fresh play without disturbing the completion subscription state.
-    await _player.stop();
-    await _player.play(DeviceFileSource(wavPath));
+    await _player.play(wav, name: 'cw_adaptive_replay');
   }
 
   /// Captures recognition latency at the first keystroke only.

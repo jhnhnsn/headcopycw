@@ -78,7 +78,7 @@ Details, if you're curious — none of this is exposed as a setting.
 - **The elapsed bar** under the input adapts to your own recent response times. It's motivational only — it never auto-submits, and finishing a slow answer still counts.
 - **Daily dose** — past about 30 minutes in a day, the session recap gently suggests coming back tomorrow. It's a nudge, never a block.
 
-Progress persists to a JSON file in the app's documents directory, with debounced writes and an immediate flush at session end. A corrupt or missing file degrades to empty progress rather than crashing. (On web, progress is in-memory only and does not persist.)
+Progress persists to a JSON file in the app's documents directory, with debounced writes and an immediate flush at session end. A corrupt or missing file degrades to empty progress rather than crashing. On web, the same JSON goes in the browser's `localStorage` instead, so it stays on that one browser and is lost if site data is cleared.
 
 ## Settings
 
@@ -111,6 +111,14 @@ flutter build ios        # iOS
 flutter build macos      # macOS
 flutter build windows    # Windows
 flutter build linux      # Linux
+```
+
+The web build is live at [jhnhnsn.com/headcopycw](https://jhnhnsn.com/headcopycw/), served as static assets by a Cloudflare Worker (`wrangler.jsonc`). Wrangler is installed through npm:
+
+```bash
+npm install
+npm run preview          # build + serve at http://localhost:8787/headcopycw/
+npm run deploy           # build + deploy (needs `npx wrangler login` once)
 ```
 
 Run the tests:

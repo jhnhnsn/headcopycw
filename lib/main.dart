@@ -74,7 +74,7 @@ class _CwTrainerAppState extends State<CwTrainerApp> with WindowListener {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Head Copy',
+      title: 'HeadCopy',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,

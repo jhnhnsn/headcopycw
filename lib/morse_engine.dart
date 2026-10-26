@@ -1,9 +1,5 @@
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
-
-import 'package:audioplayers/audioplayers.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'morse_data.dart';
 
@@ -170,57 +166,20 @@ Uint8List segmentsToWav(
   return buffer.buffer.asUint8List();
 }
 
-/// Renders [text] to a Morse WAV and writes it to a temp file, returning the
-/// path. Shared by the legacy practice loop and the adaptive "Copy" loop.
-/// A temp file (not BytesSource) is required because BytesSource fails on
-/// iOS/macOS with AVPlayer.
-Future<String> renderMorseWavFile({
+/// Renders [text] to Morse WAV bytes. Shared by the adaptive "Copy" loop's
+/// play and replay paths.
+Uint8List renderMorseWav({
   required String text,
   required int actualWpm,
   required int effectiveWpm,
   required double frequencyHz,
   EffectiveSpeedMode effectiveMode = EffectiveSpeedMode.farnsworth,
-  String fileName = 'cw_tone.wav',
-}) async {
+}) {
   final segments = textToMorseSegments(
     text: text,
     actualWpm: actualWpm,
     effectiveWpm: effectiveWpm,
     effectiveMode: effectiveMode,
   );
-  final wav = segmentsToWav(segments, frequencyHz: frequencyHz);
-  final tempDir = await getTemporaryDirectory();
-  final wavFile = File('${tempDir.path}/$fileName');
-  await wavFile.writeAsBytes(wav, flush: true);
-  return wavFile.path;
-}
-
-/// One-shot: generate and play [text] in Morse. Uses [actualWpm], [effectiveWpm],
-/// [effectiveMode], [frequencyHz]. [player] is used for playback; call [onComplete] when done.
-Future<void> playMorseText({
-  required AudioPlayer player,
-  required String text,
-  required int actualWpm,
-  required int effectiveWpm,
-  required double frequencyHz,
-  EffectiveSpeedMode effectiveMode = EffectiveSpeedMode.farnsworth,
-  void Function()? onComplete,
-}) async {
-  await player.stop();
-  final segments = textToMorseSegments(
-    text: text,
-    actualWpm: actualWpm,
-    effectiveWpm: effectiveWpm,
-    effectiveMode: effectiveMode,
-  );
-  final wav = segmentsToWav(segments, frequencyHz: frequencyHz);
-  final tempDir = await getTemporaryDirectory();
-  final wavFile = File('${tempDir.path}/cw_tone.wav');
-  await wavFile.writeAsBytes(wav, flush: true);
-  await player.play(DeviceFileSource(wavFile.path));
-  if (onComplete != null) {
-    player.onPlayerComplete.listen((_) {
-      onComplete();
-    });
-  }
+  return segmentsToWav(segments, frequencyHz: frequencyHz);
 }

@@ -3,7 +3,8 @@
 /// Stored as a single JSON file rather than in shared_preferences because the
 /// per-item state map and session history would bloat key-value storage. The
 /// file lives in the same user-editable assets directory used elsewhere, so it
-/// travels with the app's other data.
+/// travels with the app's other data. Web has no filesystem, so there the same
+/// blob goes in shared_preferences (localStorage) instead.
 ///
 /// The store is IO-injectable (takes a [File]) so it can be unit-tested against
 /// a temp directory without pulling in path_provider / platform channels.
@@ -11,6 +12,8 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'srs.dart';
 
@@ -172,21 +175,71 @@ class AdaptiveProgress {
   }
 }
 
-/// Loads/saves [AdaptiveProgress] to a JSON file. Saves are debounced so the
-/// adaptive loop can call [save] freely after every rep.
-class ProgressStore {
+/// Where the serialized progress blob lives: a JSON file natively, or a
+/// shared_preferences key (browser localStorage) on web, which has no
+/// filesystem.
+abstract class ProgressBackend {
+  /// The stored JSON, or null if nothing has been saved.
+  Future<String?> read();
+  Future<void> write(String json);
+  Future<void> delete();
+}
+
+class FileProgressBackend implements ProgressBackend {
   final File file;
+
+  FileProgressBackend(this.file);
+
+  @override
+  Future<String?> read() async =>
+      await file.exists() ? await file.readAsString() : null;
+
+  @override
+  Future<void> write(String json) async {
+    await file.parent.create(recursive: true);
+    await file.writeAsString(json, flush: true);
+  }
+
+  @override
+  Future<void> delete() async {
+    if (await file.exists()) await file.delete();
+  }
+}
+
+class PrefsProgressBackend implements ProgressBackend {
+  static const String key = 'adaptive_progress';
+
+  @override
+  Future<String?> read() async =>
+      (await SharedPreferences.getInstance()).getString(key);
+
+  @override
+  Future<void> write(String json) async =>
+      (await SharedPreferences.getInstance()).setString(key, json);
+
+  @override
+  Future<void> delete() async =>
+      (await SharedPreferences.getInstance()).remove(key);
+}
+
+/// Loads/saves [AdaptiveProgress] through a [ProgressBackend]. Saves are
+/// debounced so the adaptive loop can call [save] freely after every rep.
+class ProgressStore {
+  final ProgressBackend backend;
   final Duration debounce;
 
-  ProgressStore(this.file, {this.debounce = const Duration(milliseconds: 750)});
+  ProgressStore(File file, {Duration debounce = const Duration(milliseconds: 750)})
+      : this.withBackend(FileProgressBackend(file), debounce: debounce);
 
-  /// Reads the progress file. Returns an empty [AdaptiveProgress] if the file is
+  ProgressStore.withBackend(this.backend,
+      {this.debounce = const Duration(milliseconds: 750)});
+
+  /// Reads the stored progress. Returns an empty [AdaptiveProgress] if it is
   /// missing or corrupt (so a bad write never bricks the mode).
   Future<AdaptiveProgress> load() async {
     try {
-      if (!await file.exists()) return AdaptiveProgress();
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) return AdaptiveProgress();
+      final raw = await backend.read();
+      if (raw == null || raw.trim().isEmpty) return AdaptiveProgress();
       return AdaptiveProgress.fromJson(
           (jsonDecode(raw) as Map).cast<String, dynamic>());
     } catch (_) {
@@ -211,13 +264,9 @@ class ProgressStore {
   }
 
   /// Immediate write, bypassing the debounce (use on session end / dispose).
-  Future<void> flush(AdaptiveProgress progress) async {
-    await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(progress.toJson()), flush: true);
-  }
+  Future<void> flush(AdaptiveProgress progress) =>
+      backend.write(jsonEncode(progress.toJson()));
 
-  /// Deletes the progress file (reset-progress action).
-  Future<void> reset() async {
-    if (await file.exists()) await file.delete();
-  }
+  /// Deletes the stored progress (reset-progress action).
+  Future<void> reset() => backend.delete();
 }
