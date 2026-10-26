@@ -6,6 +6,8 @@ You press Start, listen, and type what you heard. The app watches how fast and h
 
 It runs on your phone, which is the point. Short daily sessions, wherever you are.
 
+**Try it in your browser: [jhnhnsn.com/headcopycw](https://jhnhnsn.com/headcopycw/)** — nothing to install. Progress is saved in that browser only.
+
 I'm releasing this as open source. Bugs, ideas, and fixes are all welcome. Share and enjoy!
 
 ## Quick start
